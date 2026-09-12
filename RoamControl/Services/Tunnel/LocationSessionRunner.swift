@@ -16,8 +16,7 @@ final class LocationSessionRunner {
     enum Event {
         /// Not retryable without relaunching the app.
         case schedulerUnavailable
-        /// Worth retrying once the connection has been cycled.
-        case submissionRejected
+        case submissionRejected(SchedulerFailureReason)
         case active
         case expired
         case finished(Outcome)
@@ -92,11 +91,13 @@ final class LocationSessionRunner {
             do {
                 try await BGTaskScheduler.shared.submitTaskRequest(request)
             } catch {
-                guard let self else { return }
                 BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: identifier)
+                // A rejection that arrives after the session was cancelled or
+                // replaced belongs to a request nobody is waiting on.
+                guard let self, self.submittedTaskIdentifier == identifier else { return }
                 self.submittedTaskIdentifier = nil
                 self.pending = nil
-                self.onEvent?(.submissionRejected)
+                self.onEvent?(.submissionRejected(SchedulerFailureReason.classify(error)))
             }
         }
     }

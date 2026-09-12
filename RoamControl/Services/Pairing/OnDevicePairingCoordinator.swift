@@ -119,9 +119,7 @@ final class OnDevicePairingCoordinator {
             } catch {
                 submittedTaskIdentifier = nil
                 recordStore = nil
-                phase = .failed(
-                    "iOS could not keep pairing active in the background. Keep Roam Control open and try again."
-                )
+                phase = .failed(SchedulerFailureReason.classify(error).guidance)
             }
         }
     }

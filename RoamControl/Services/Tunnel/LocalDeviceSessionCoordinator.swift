@@ -295,7 +295,12 @@ final class LocalDeviceSessionCoordinator {
         case .schedulerUnavailable:
             fail("iOS could not prepare the location session. Close Roam Control, reopen it, and try again.")
 
-        case .submissionRejected:
+        case .submissionRejected(let reason):
+            // Cycling the tunnel cannot make iOS hand back a task it withheld.
+            guard reason.isRecoverable else {
+                fail(reason.guidance)
+                return
+            }
             recoverFromConnectionSetback()
 
         case .active:
