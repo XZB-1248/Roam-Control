@@ -249,6 +249,7 @@ struct HomeView: View {
                             withAnimation(cardAnimation) { mapModel.show(destination) }
                         }
                     )
+                    .transition(.blurReplace)
                     } else {
                     LocationSelectionCard(
                         location: mapModel.selectedLocation,
@@ -285,6 +286,7 @@ struct HomeView: View {
                             appModel.stopLocationSession()
                         }
                     )
+                    .transition(.blurReplace)
                     }
                 } else {
                     Spacer()
@@ -293,7 +295,7 @@ struct HomeView: View {
             .padding(.horizontal, 16)
             .padding(.top, 8)
             .padding(.bottom, 8)
-            .animation(cardAnimation, value: walkingRoutePlanner.route != nil)
+            .animation(cardSwapAnimation, value: walkingRoutePlanner.route != nil)
 
             if let message = mapModel.errorMessage {
                 VStack {
@@ -522,6 +524,13 @@ struct HomeView: View {
     private var cardAnimation: Animation? {
         reduceMotion ? nil : .easeInOut(duration: 0.3)
     }
+
+    /// Nil under Reduce Motion, which also stops the cards' transition from
+    /// playing — a transition only runs inside an animation.
+    private var cardSwapAnimation: Animation? {
+        reduceMotion ? nil : .smooth(duration: 0.35)
+    }
+
 
     private var shouldShowMapCompass: Bool {
         let heading = normalisedMapHeading
