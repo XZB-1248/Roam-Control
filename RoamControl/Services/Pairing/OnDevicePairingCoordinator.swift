@@ -32,7 +32,10 @@ final class OnDevicePairingCoordinator {
     }
 
     private(set) var phase: OnDevicePairingPhase = .idle {
-        didSet { onPhaseChange?(phase) }
+        didSet {
+            guard phase != oldValue else { return }
+            onPhaseChange?(phase)
+        }
     }
 
     var onPhaseChange: ((OnDevicePairingPhase) -> Void)?
@@ -47,9 +50,10 @@ final class OnDevicePairingCoordinator {
     private var pendingFailureMessage: String?
     private var backgroundTaskFinished = true
     private var workerIsRunning = false
+    private var isStoringRecord = false
 
     var isRunning: Bool {
-        workerIsRunning || phase == .preparing
+        workerIsRunning || isStoringRecord || phase == .preparing
     }
 
     var isAvailableOnThisDevice: Bool {
@@ -92,6 +96,12 @@ final class OnDevicePairingCoordinator {
             }
 
             MainActor.assumeIsolated {
+                guard Self.shared.submittedTaskIdentifier == identifier,
+                      !Self.shared.cancellationRequested
+                else {
+                    task.setTaskCompleted(success: false)
+                    return
+                }
                 Self.shared.beginPairing(with: task)
             }
         }
@@ -116,7 +126,12 @@ final class OnDevicePairingCoordinator {
         Task {
             do {
                 try await BGTaskScheduler.shared.submitTaskRequest(request)
+                if submittedTaskIdentifier != identifier || cancellationRequested {
+                    BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: identifier)
+                }
             } catch {
+                BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: identifier)
+                guard submittedTaskIdentifier == identifier, !cancellationRequested else { return }
                 submittedTaskIdentifier = nil
                 recordStore = nil
                 phase = .failed(SchedulerFailureReason.classify(error).guidance)
@@ -125,6 +140,9 @@ final class OnDevicePairingCoordinator {
     }
 
     func cancel() {
+        // The keychain write is short and has no cancellation point; letting a
+        // new attempt start on top of it would race the record store.
+        guard !isStoringRecord else { return }
         guard isRunning else {
             phase = .idle
             return
@@ -139,6 +157,13 @@ final class OnDevicePairingCoordinator {
         }
         if let submittedTaskIdentifier {
             BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: submittedTaskIdentifier)
+        }
+
+        // Without a worker there is no completion coming back to settle the phase.
+        if !workerIsRunning {
+            submittedTaskIdentifier = nil
+            recordStore = nil
+            phase = .idle
         }
     }
 
@@ -205,9 +230,13 @@ final class OnDevicePairingCoordinator {
 
             let outcome = NativePairingOutcome(result: result, returnCode: returnCode)
             rc_remote_pairing_result_destroy(&result)
-            rc_remote_pairing_session_destroy(session)
 
             DispatchQueue.main.async {
+                // Destroying here rather than off the main actor keeps it from
+                // racing a cancel, which reaches the same session pointer.
+                if let session = OpaquePointer(bitPattern: sessionBits) {
+                    rc_remote_pairing_session_destroy(session)
+                }
                 let coordinator = Unmanaged<OnDevicePairingCoordinator>
                     .fromOpaque(context)
                     .takeRetainedValue()
@@ -277,17 +306,23 @@ final class OnDevicePairingCoordinator {
 
         switch outcome {
         case .success(let record, let hostAltIRK, let device):
+            isStoringRecord = true
             phase = .storing
             backgroundTask?.progress.completedUnitCount = 80
 
             guard let recordStore else {
+                isStoringRecord = false
                 fail("Roam Control could not securely store the new pairing.")
                 return
             }
 
+            let storingTaskIdentifier = submittedTaskIdentifier
             Task {
+                defer { self.isStoringRecord = false }
                 do {
                     _ = try await recordStore(record, hostAltIRK)
+                    guard self.submittedTaskIdentifier == storingTaskIdentifier,
+                          self.phase == .storing else { return }
                     self.recordStore = nil
                     self.phase = .success(device)
                     self.backgroundTask?.progress.completedUnitCount = 100
@@ -297,6 +332,8 @@ final class OnDevicePairingCoordinator {
                     )
                     self.finishBackgroundTask(success: true)
                 } catch {
+                    guard self.submittedTaskIdentifier == storingTaskIdentifier,
+                          self.phase == .storing else { return }
                     self.fail(error.localizedDescription)
                 }
             }
