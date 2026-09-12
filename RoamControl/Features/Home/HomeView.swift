@@ -35,7 +35,7 @@ struct HomeView: View {
                 Map(position: $mapModel.cameraPosition) {
                     if let route = walkingRoutePlanner.route {
                         MapPolyline(route)
-                            .stroke(.blue, lineWidth: 6)
+                            .stroke(.blue, lineWidth: 4)
                     }
 
                     if shouldShowRealLocation {
