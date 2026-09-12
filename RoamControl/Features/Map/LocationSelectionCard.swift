@@ -172,7 +172,12 @@ struct LocationSelectionCard: View {
                         Image(systemName: didCopyCoordinates ? "checkmark" : "doc.on.doc")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(didCopyCoordinates ? .green : .blue)
-                            .frame(width: 44, height: 44)
+                            .contentTransition(.symbolEffect(.replace.magic(fallback: .replace)))
+                            // A 44pt frame here would set the row's height and
+                            // leave the address floating in the middle of it.
+                            .padding(14)
+                            .contentShape(.rect)
+                            .padding(-14)
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(didCopyCoordinates ? "Location copied" : "Copy location")
@@ -231,7 +236,7 @@ struct LocationSelectionCard: View {
         } else {
             UIPasteboard.general.string = "\(name), \(subtitle)"
         }
-        didCopyCoordinates = true
+        withAnimation { didCopyCoordinates = true }
 
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(2))

@@ -232,7 +232,7 @@ struct HomeView: View {
                         onWalkBack: {
                             guard let returnTarget = walkingSimulation.prepareReturnTrip() else { return }
                             walkingRoutePlanner.retargetExistingRoute(to: returnTarget)
-                            mapModel.show(returnTarget)
+                            withAnimation(cardAnimation) { mapModel.show(returnTarget) }
                         },
                         onChooseNewLocation: {
                             walkingSimulation.reset()
@@ -246,7 +246,7 @@ struct HomeView: View {
                         onDone: {
                             walkingSimulation.reset()
                             walkingRoutePlanner.clear()
-                            mapModel.show(destination)
+                            withAnimation(cardAnimation) { mapModel.show(destination) }
                         }
                     )
                     } else {
@@ -271,7 +271,7 @@ struct HomeView: View {
                             Task {
                                 if let route = await walkingRoutePlanner.preview(to: target) {
                                     walkingSimulation.prepare(route: route, destination: target)
-                                    mapModel.show(route)
+                                    withAnimation(cardAnimation) { mapModel.show(route) }
                                 }
                             }
                         },
@@ -293,6 +293,7 @@ struct HomeView: View {
             .padding(.horizontal, 16)
             .padding(.top, 8)
             .padding(.bottom, 8)
+            .animation(cardAnimation, value: walkingRoutePlanner.route != nil)
 
             if let message = mapModel.errorMessage {
                 VStack {
@@ -516,6 +517,10 @@ struct HomeView: View {
         guard let heading = visibleMapCamera?.heading else { return 0 }
         let remainder = heading.truncatingRemainder(dividingBy: 360)
         return remainder >= 0 ? remainder : remainder + 360
+    }
+
+    private var cardAnimation: Animation? {
+        reduceMotion ? nil : .easeInOut(duration: 0.3)
     }
 
     private var shouldShowMapCompass: Bool {
