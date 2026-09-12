@@ -40,11 +40,14 @@ The simulator can validate most interface states, but it cannot perform the real
 
 ### Standard map globe support
 
-`StandardMapGlobeSupport.m` adjusts MapKit's private cartographic
-configuration factory so Standard maps use globe projection. The adjustment is
-installed before the first map view, applies again when configurations are
-rebuilt, and preserves the other configuration fields and non-Standard styles.
-It changes only this app's process; no system preferences are written.
+`StandardMapGlobeSupport.m` adjusts MapKit's final private cartographic
+configuration setter so Standard maps use globe projection with compatible
+terrain. SwiftUI route overlays can downgrade terrain after the configuration
+factory returns; forcing only the projection at the factory leaves flat tiles
+on a sphere. The final setter prevents that downgrade while preserving other
+fields, existing non-flat terrain modes, and non-Standard styles. It is
+installed before the first map view and also handles overlay changes. It changes
+only this app's process; no system preferences are written.
 
 The installer checks for the private method and a compatible Objective-C method
 signature, without restricting the OS version. If either check fails, the app

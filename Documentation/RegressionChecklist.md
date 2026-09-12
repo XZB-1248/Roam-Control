@@ -28,6 +28,7 @@ Use this checklist before packaging an IPA or declaring a development build stab
 - [ ] Switch Standard → Satellite → Hybrid → Standard at globe scale; each style renders correctly and Standard remains a globe after relaunch.
 - [ ] Rotate the Standard globe and use the compass to return north; nearby coordinate searches and dropped pins remain accurate.
 - [ ] Preview a walking route, zoom between street and globe scale, then clear the route; markers and the route render without a crash.
+- [ ] At globe scale with a walking route, the base map remains a continuous sphere without flat tile fragments; zoom back in and check that POI and traffic labels stay aligned with roads.
 - [ ] Live suggestions appear after two or more characters.
 - [ ] Choosing a result dismisses the keyboard and clears the search text.
 - [ ] Search accepts valid latitude/longitude coordinates.

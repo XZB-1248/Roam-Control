@@ -17,43 +17,50 @@ typedef struct {
 
 _Static_assert(sizeof(RCCartographicConfiguration) == 56, "Unexpected MapKit configuration layout");
 
-typedef RCCartographicConfiguration (*RCConfigurationFactory)(id, SEL, MKMapConfiguration *);
-static RCConfigurationFactory originalConfigurationFactory;
+typedef void (*RCConfigurationSetter)(MKMapView *, SEL, RCCartographicConfiguration, BOOL, BOOL);
+static RCConfigurationSetter originalConfigurationSetter;
 
-static RCCartographicConfiguration RCGlobeConfiguration(
-    id receiver, SEL selector, MKMapConfiguration *configuration
+static void RCSetGlobeConfiguration(
+    MKMapView *mapView, SEL selector, RCCartographicConfiguration configuration,
+    BOOL onInit, BOOL animated
 ) {
-    RCCartographicConfiguration result = originalConfigurationFactory(receiver, selector, configuration);
-    if ([configuration isKindOfClass:MKStandardMapConfiguration.class]) {
-        // Same projection value used by ForceGlobeProjectionForStandardMap in
-        // -[MKMapView _updateCartographicConfigurationOnInit:]. Leave terrain,
-        // emphasis and every other field under MapKit's control.
-        result.projection = 1;
+    if (configuration.mapType == 0) {
+        configuration.projection = 1;
+        // SwiftUI route overlays can cause _updateCartographicConfigurationOnInit:
+        // to downgrade terrain AFTER the configuration factory has returned.
+        // Flat terrain (0) plus globe projection produces planar tiles on the
+        // sphere and misaligned map labels. Apply the compatible pair at the
+        // final setter, including when overlays are added or removed.
+        if (configuration.terrainMode == 0) {
+            configuration.terrainMode = 1;
+        }
     }
-    return result;
+    originalConfigurationSetter(mapView, selector, configuration, onInit, animated);
 }
 
 BOOL RCInstallStandardMapGlobeSupport(void) {
     static dispatch_once_t onceToken;
     static BOOL installed = NO;
     dispatch_once(&onceToken, ^{
-        SEL selector = NSSelectorFromString(@"_cartographicConfigurationForMapConfiguration:");
-        Method method = class_getClassMethod(MKMapConfiguration.class, selector);
+        SEL selector = NSSelectorFromString(@"_setCartographicConfiguration:onInit:animated:");
+        Method method = class_getInstanceMethod(MKMapView.class, selector);
         if (!method) {
-            os_log_error(OS_LOG_DEFAULT, "Standard map globe unavailable: configuration factory missing");
+            os_log_error(OS_LOG_DEFAULT, "Standard map globe unavailable: configuration setter missing");
             return;
         }
 
         NSMethodSignature *signature = [NSMethodSignature signatureWithObjCTypes:method_getTypeEncoding(method)];
-        if (signature.numberOfArguments != 3
-            || strcmp(signature.methodReturnType, @encode(RCCartographicConfiguration)) != 0
-            || strcmp([signature getArgumentTypeAtIndex:2], @encode(id)) != 0) {
+        if (signature.numberOfArguments != 5
+            || strcmp(signature.methodReturnType, @encode(void)) != 0
+            || strcmp([signature getArgumentTypeAtIndex:2], @encode(RCCartographicConfiguration)) != 0
+            || strcmp([signature getArgumentTypeAtIndex:3], @encode(BOOL)) != 0
+            || strcmp([signature getArgumentTypeAtIndex:4], @encode(BOOL)) != 0) {
             os_log_error(OS_LOG_DEFAULT, "Standard map globe unavailable: configuration ABI changed");
             return;
         }
 
-        originalConfigurationFactory = (RCConfigurationFactory)method_getImplementation(method);
-        method_setImplementation(method, (IMP)RCGlobeConfiguration);
+        originalConfigurationSetter = (RCConfigurationSetter)method_getImplementation(method);
+        method_setImplementation(method, (IMP)RCSetGlobeConfiguration);
         installed = YES;
     });
     return installed;
