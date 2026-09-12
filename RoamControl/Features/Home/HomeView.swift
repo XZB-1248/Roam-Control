@@ -296,6 +296,7 @@ struct HomeView: View {
             .padding(.top, 8)
             .padding(.bottom, 8)
             .animation(cardSwapAnimation, value: walkingRoutePlanner.route != nil)
+            .animation(cardSwapAnimation, value: mapModel.selectedLocation?.id)
 
             if let message = mapModel.errorMessage {
                 VStack {

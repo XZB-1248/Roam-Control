@@ -49,6 +49,7 @@ struct LocationSelectionCard: View {
     private var cardContent: some View {
         VStack(alignment: .leading, spacing: 16) {
             if let location {
+                VStack(alignment: .leading, spacing: 16) {
                 locationHeader(for: location)
 
                 Button(action: primaryAction) {
@@ -108,7 +109,8 @@ struct LocationSelectionCard: View {
                     .foregroundStyle(isFailure ? .red : .secondary)
                     .frame(maxWidth: .infinity, alignment: .center)
                     .fixedSize(horizontal: false, vertical: true)
-
+                }
+                .transition(.blurReplace)
             } else {
                 HStack(spacing: 14) {
                     Image(systemName: "hand.tap")
@@ -124,6 +126,7 @@ struct LocationSelectionCard: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .transition(.blurReplace)
             }
         }
     }
