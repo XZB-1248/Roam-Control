@@ -25,6 +25,13 @@ enum MapCoordinateDatum {
         return estimate
     }
 
+    /// MapKit applies the offset itself when drawing a reported position, so
+    /// anything placed on the map beside one has to be offset to match.
+    static func mapCoordinate(from wgs84: CLLocationCoordinate2D) -> CLLocationCoordinate2D {
+        guard isOffset(wgs84) else { return wgs84 }
+        return offsetting(wgs84)
+    }
+
     /// The conventional bounding box for mainland China. It over-reaches: Hong
     /// Kong, Macau, Taiwan, Seoul, Bangkok and Hanoi all sit inside it but are
     /// surveyed in WGS-84.

@@ -446,7 +446,7 @@ final class MapViewModel: NSObject, MKLocalSearchCompleterDelegate {
     private func center(on location: CLLocation) {
         cameraPosition = .region(
             MKCoordinateRegion(
-                center: location.coordinate,
+                center: MapCoordinateDatum.mapCoordinate(from: location.coordinate),
                 span: MKCoordinateSpan(latitudeDelta: 0.025, longitudeDelta: 0.025)
             )
         )
