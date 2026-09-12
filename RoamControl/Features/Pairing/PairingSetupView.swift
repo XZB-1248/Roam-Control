@@ -8,7 +8,6 @@ struct PairingSetupView: View {
     @State private var isImporting = false
     @State private var isConfirmingRemoval = false
 
-    private let localDevVPNURL = URL(string: "https://apps.apple.com/app/localdevvpn/id6755608044")!
 
     var body: some View {
         NavigationStack {
@@ -201,14 +200,7 @@ struct PairingSetupView: View {
                 .font(.headline)
 
             requirementRow(number: "1", text: "Pair this iPhone here, or import its existing RPPairing file.")
-            requirementRow(number: "2", text: "Install LocalDevVPN and switch it on.")
-            requirementRow(number: "3", text: "Keep Developer Mode enabled on the iPhone.")
-
-            Link(destination: localDevVPNURL) {
-                Label("View LocalDevVPN", systemImage: "arrow.up.right.square")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.bordered)
+            requirementRow(number: "2", text: "Keep Developer Mode enabled on the iPhone.")
 
             Text("New on-device pairing is available on iOS 27. The simulator can test the screen, but Apple only exposes the real handshake on a physical iPhone.")
                 .font(.caption)
@@ -391,7 +383,7 @@ struct PairingSetupView: View {
                 ? "Create the pairing securely on this iPhone, or import an existing file."
                 : "Connect your physical iPhone to create the pairing, or import an existing file."
         case .paired:
-            return "Roam Control can use this record when the LocalDevVPN session layer is connected."
+            return "Roam Control can use this record once its local tunnel is connected."
         case .failed(let message):
             return message
         }

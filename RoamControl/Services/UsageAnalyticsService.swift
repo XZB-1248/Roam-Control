@@ -12,7 +12,7 @@ enum UsageAnalyticsEvent: String {
     case activeLocationUpdated = "RoamControl.Location.activeUpdated"
     case locationPreparationFailed = "RoamControl.Location.PreparationFailed"
     case locationRestoreFailed = "RoamControl.Location.RestoreFailed"
-    case localDevVPNUnreachable = "RoamControl.LocalDevVPN.Unreachable"
+    case localTunnelUnreachable = "RoamControl.LocalTunnel.Unreachable"
     case locationStartFailed = "RoamControl.Location.StartFailed"
 }
 

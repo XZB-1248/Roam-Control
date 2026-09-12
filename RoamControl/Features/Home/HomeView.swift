@@ -258,7 +258,6 @@ struct HomeView: View {
                         isFavourite: mapModel.selectedLocation.map(appModel.isFavourite) ?? false,
                         isPaired: isPaired,
                         sessionPhase: appModel.deviceSession.phase,
-                        localDevVPNInstallURL: appModel.localDevVPNInstallURL,
                         isPreviewingWalkingRoute: walkingRoutePlanner.isLoading,
                         walkingRouteError: walkingRoutePlanner.errorMessage,
                         onToggleFavourite: {
@@ -322,7 +321,7 @@ struct HomeView: View {
                     Spacer()
                     MobileDataGuidanceView(
                         guidance: guidance,
-                        onOpenLocalDevVPN: appModel.deviceSession.openLocalDevVPN,
+                        onRestartTunnel: appModel.deviceSession.restartTunnel,
                         onRetry: appModel.deviceSession.retryConnection,
                         onUseMobileData: appModel.deviceSession.useMobileDataGuidance,
                         onMobileDataOff: appModel.deviceSession.confirmMobileDataIsOff,
@@ -401,7 +400,7 @@ struct HomeView: View {
             )
 
             switch newPhase {
-            case .openingLocalDevVPN, .discovering, .connecting, .active, .stopping:
+            case .startingTunnel, .discovering, .connecting, .active, .stopping:
                 shouldRefreshRealLocationWhenActive = false
                 mapModel.invalidateRealLocationCache()
             case .idle:
@@ -504,7 +503,7 @@ struct HomeView: View {
         switch appModel.deviceSession.phase {
         case .active, .stopping:
             false
-        case .idle, .openingLocalDevVPN, .discovering, .connecting, .failed:
+        case .idle, .startingTunnel, .discovering, .connecting, .failed:
             true
         }
     }
@@ -513,7 +512,7 @@ struct HomeView: View {
         switch appModel.deviceSession.phase {
         case .idle, .failed:
             true
-        case .openingLocalDevVPN, .discovering, .connecting, .active, .stopping:
+        case .startingTunnel, .discovering, .connecting, .active, .stopping:
             false
         }
     }

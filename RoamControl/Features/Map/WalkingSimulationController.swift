@@ -205,7 +205,7 @@ final class WalkingSimulationController {
             currentCoordinate = nil
             phase = .failed(message)
 
-        case .openingLocalDevVPN, .discovering, .connecting:
+        case .startingTunnel, .discovering, .connecting:
             break
         }
     }

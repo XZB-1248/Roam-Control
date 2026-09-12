@@ -4,6 +4,21 @@ All notable public changes to Roam Control are recorded here.
 
 ## [Unreleased]
 
+### Changed
+
+- Replaced the LocalDevVPN dependency with a bundled `NEPacketTunnelProvider`. Roam Control now brings up its own loopback tunnel for the length of a location session, so there is no app switching and no external install step.
+- Renamed the bundle identifier to `com.clover.RoamControl`. The tunnel extension is `com.clover.RoamControl.tunnel`.
+- Building now requires a paid Apple Developer Program membership: Network Extension entitlements cannot be signed by a free account, so SideStore and AltStore installs are no longer possible.
+
+### Added
+
+- Settings → Local Tunnel shows the tunnel's live state and can keep it running between sessions for troubleshooting.
+
+### Internal
+
+- Split `LocalDeviceSessionCoordinator` into focused collaborators: `LocalTunnelController` (tunnel lifecycle), `RemotePairingBrowser` (discovery and pairing match), `LocationSessionRunner` (native session and background task). The coordinator now only sequences them.
+- `ConnectionDiagnosticsCoordinator` reuses `RemotePairingBrowser` instead of carrying its own duplicate Bonjour implementation.
+
 ## [0.9.1] - 2026-09-10
 
 First beta polish release, corresponding to app version 0.9.1 Build 47.

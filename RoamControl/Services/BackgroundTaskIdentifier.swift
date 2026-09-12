@@ -3,7 +3,7 @@ import Foundation
 enum BackgroundTaskIdentifier {
     static func prefix(for component: String) -> String {
         let wildcardSuffix = ".\(component).*"
-        let bundleIdentifier = Bundle.main.bundleIdentifier ?? "com.sean.roamcontrol"
+        let bundleIdentifier = Bundle.main.bundleIdentifier ?? "com.clover.RoamControl"
 
         if let permittedIdentifiers = Bundle.main.object(
             forInfoDictionaryKey: "BGTaskSchedulerPermittedIdentifiers"

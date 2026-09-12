@@ -59,6 +59,16 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    LabeledContent("Status", value: tunnelStatusTitle)
+
+                    Toggle("Keep Tunnel Running", isOn: keepTunnelRunningBinding)
+                } header: {
+                    Text("Local Tunnel")
+                } footer: {
+                    Text("Roam Control runs its own tunnel for the length of a location session. Keep it running to leave it up in between, which makes connection problems easier to observe.")
+                }
+
+                Section {
                     Toggle(
                         "Share Anonymous Usage Statistics",
                         isOn: anonymousUsageStatisticsBinding
@@ -128,7 +138,7 @@ struct SettingsView: View {
                         isConfirmingReset = true
                     }
                 } footer: {
-                    Text("This clears the pairing record and local app settings, then shows onboarding again. It does not remove or change LocalDevVPN.")
+                    Text("This clears the pairing record and local app settings, then shows onboarding again. It does not remove the tunnel's VPN configuration.")
                 }
             }
             .navigationTitle("Settings")
@@ -263,6 +273,26 @@ struct SettingsView: View {
             get: { appModel.mapDisplayStyle },
             set: appModel.setMapDisplayStyle
         )
+    }
+
+    private var keepTunnelRunningBinding: Binding<Bool> {
+        Binding(
+            get: { appModel.tunnel.keepsRunningBetweenSessions },
+            set: { isKeptRunning in
+                Task { await appModel.setTunnelKeptRunning(isKeptRunning) }
+            }
+        )
+    }
+
+    private var tunnelStatusTitle: String {
+        switch appModel.tunnel.status {
+        case .unavailable: "Needs a physical iPhone"
+        case .notConfigured: "Not set up"
+        case .disconnected: "Off"
+        case .connecting: "Starting"
+        case .connected: "Connected"
+        case .failed: "Failed"
+        }
     }
 
     private var anonymousUsageStatisticsBinding: Binding<Bool> {

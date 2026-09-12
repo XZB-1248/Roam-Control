@@ -39,17 +39,21 @@ final class AppModel {
 
     let pairingService: any PairingService
     let onDevicePairing: OnDevicePairingCoordinator
+    let tunnel: LocalTunnelController
     let deviceSession: LocalDeviceSessionCoordinator
+    let connectionDiagnostics: ConnectionDiagnosticsCoordinator
     private let usageAnalytics: UsageAnalyticsService
-    let localDevVPNInstallURL = URL(string: "https://apps.apple.com/app/localdevvpn/id6755608044")!
 
     init(
         pairingService: any PairingService = SecurePairingService(),
         preferences: UserDefaults = .standard
     ) {
+        let tunnel = LocalTunnelController(preferences: preferences)
         self.pairingService = pairingService
         self.onDevicePairing = .shared
-        self.deviceSession = LocalDeviceSessionCoordinator()
+        self.tunnel = tunnel
+        self.deviceSession = LocalDeviceSessionCoordinator(tunnel: tunnel)
+        self.connectionDiagnostics = ConnectionDiagnosticsCoordinator(tunnel: tunnel)
         self.usageAnalytics = UsageAnalyticsService(preferences: preferences)
         self.preferences = preferences
         let hasCompletedOnboarding = preferences.bool(forKey: Self.onboardingKey)
@@ -416,8 +420,14 @@ final class AppModel {
         deviceSession.stop()
     }
 
-    func handleOpenURL(_ url: URL) {
-        deviceSession.handleOpenURL(url)
+    func setTunnelKeptRunning(_ isKeptRunning: Bool) async {
+        tunnel.keepsRunningBetweenSessions = isKeptRunning
+
+        if isKeptRunning {
+            try? await tunnel.start()
+        } else if !deviceSession.needsTunnel {
+            tunnel.stop()
+        }
     }
 
     func appBecameActive() {
@@ -465,7 +475,7 @@ final class AppModel {
             } else {
                 connectionState = .notConfigured
             }
-        case .openingLocalDevVPN, .discovering, .connecting, .stopping:
+        case .startingTunnel, .discovering, .connecting, .stopping:
             connectionState = .connecting
         case .active(let target):
             connectionState = .active
@@ -517,8 +527,8 @@ final class AppModel {
 
     private func analyticsEvent(forLocationStartFailure message: String) -> UsageAnalyticsEvent {
         let normalizedMessage = message.lowercased()
-        if normalizedMessage.contains("localdevvpn") {
-            return .localDevVPNUnreachable
+        if normalizedMessage.contains("tunnel") {
+            return .localTunnelUnreachable
         }
         if normalizedMessage.contains("prepare") {
             return .locationPreparationFailed

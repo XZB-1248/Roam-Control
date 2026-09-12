@@ -20,7 +20,7 @@
   <img src="https://img.shields.io/badge/License-PolyForm%20NC%201.0.0-blue" alt="PolyForm Noncommercial 1.0.0">
 </p>
 
-Roam Control is a source-available SwiftUI app for location-based development, quality assurance and responsible personal testing on an iPhone you own and control. It supports fixed locations, walking routes, favourites, history, native on-device pairing and LocalDevVPN-compatible sessions.
+Roam Control is a source-available SwiftUI app for location-based development, quality assurance and responsible personal testing on an iPhone you own and control. It supports fixed locations, walking routes, favourites, history, native on-device pairing and a self-contained local tunnel.
 
 ## Screenshots
 
@@ -52,22 +52,21 @@ Roam Control is a source-available SwiftUI app for location-based development, q
 - Save named favourites and revisit recent locations.
 - Restore the real location explicitly when testing is finished.
 - Recover safely after an interrupted fixed or walking session.
-- Follow separate, guided LocalDevVPN flows for Wi-Fi and mobile data.
+- Follow separate, guided connection flows for Wi-Fi and mobile data.
 - Choose automatic, light or dark appearance and standard, satellite or hybrid maps.
 - Use Dynamic Type, VoiceOver and Reduce Motion.
 
 ## Install the public beta
 
-Roam Control is not distributed through the App Store or TestFlight. Download the IPA attached to the matching GitHub Release and sign it with SideStore using your own Apple account.
+This fork bundles its own packet tunnel, so it must be built and signed with a paid Apple Developer Program membership. Free accounts, SideStore and AltStore cannot sign a Network Extension.
 
 You will need:
 
 - An iPhone running iOS 27 or newer.
 - Developer Mode enabled.
-- [LocalDevVPN](https://apps.apple.com/app/localdevvpn/id6755608044).
-- SideStore, or Xcode on a Mac.
+- Xcode 27 or newer and a paid Apple Developer Program membership.
 
-Read the complete [installation guide](Documentation/Installation.md) before installing. Free Apple accounts remain subject to Apple's app-count and seven-day refresh limits.
+Read the complete [installation guide](Documentation/Installation.md) before installing.
 
 ## First-time setup
 
@@ -76,8 +75,7 @@ Read the complete [installation guide](Documentation/Installation.md) before ins
 3. Tap **Pair This iPhone** on Device Setup.
 4. Open **Settings → Privacy & Security → Developer Mode → Pair with Roam Control**.
 5. Enter the six-digit code shown in Roam Control.
-6. Install and connect LocalDevVPN.
-7. Choose a location or walking route.
+6. Choose a location or walking route, and approve the VPN configuration when iOS asks.
 
 The pairing record is stored in the iPhone Keychain and is never uploaded.
 
@@ -110,7 +108,9 @@ Normal builds use the included `Frameworks/RoamPairingFFI.xcframework`. The fram
 
 ## How it works
 
-Roam Control generates or imports an RPPairing record for the same iPhone and stores it in the device-only Keychain. When a location starts, it discovers that iPhone's remote-pairing service through LocalDevVPN, verifies the device identity and opens the encrypted developer session used to set or clear a simulated location.
+Roam Control generates or imports an RPPairing record for the same iPhone and stores it in the device-only Keychain. When a location starts, it brings up its own packet tunnel, discovers that iPhone's remote-pairing service, verifies the device identity and opens the encrypted developer session used to set or clear a simulated location.
+
+The tunnel exists because iOS will not serve the remote-pairing service over loopback: a connection to any local address short-circuits through `lo0`, which `remoted` does not answer. The bundled `NEPacketTunnelProvider` takes `10.7.0.0` and advertises `10.7.0.1`, swaps the source and destination of each packet sent to that peer, and writes it straight back, so it arrives as ordinary inbound traffic on a real interface. Only `10.7.0.1` is routed into it.
 
 The native engine is a narrow Rust-to-Swift bridge around the MIT-licensed [`idevice`](https://github.com/jkcoxson/idevice) library, pinned to an exact revision.
 

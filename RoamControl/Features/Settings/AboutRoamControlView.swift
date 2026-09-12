@@ -56,7 +56,7 @@ struct AboutRoamControlView: View {
                 guideRow(
                     "Start Location",
                     symbol: "location.fill",
-                    text: "Start reporting the selected place as this iPhone’s location. LocalDevVPN must be connected."
+                    text: "Start reporting the selected place as this iPhone’s location. Roam Control brings up its local tunnel first."
                 )
                 guideRow(
                     "Update Location",
@@ -122,7 +122,7 @@ struct AboutRoamControlView: View {
                 guideRow(
                     "Pairing & Connection",
                     symbol: "iphone.and.arrow.forward",
-                    text: "Pair this iPhone once so Roam Control can identify it through LocalDevVPN."
+                    text: "Pair this iPhone once so Roam Control can identify it through its local tunnel."
                 )
                 guideRow(
                     "Connection Health",
@@ -137,7 +137,7 @@ struct AboutRoamControlView: View {
                 guideRow(
                     "Reset Roam Control",
                     symbol: "arrow.counterclockwise",
-                    text: "Erase the pairing record and all saved app choices, then return to onboarding. LocalDevVPN itself is not changed."
+                    text: "Erase the pairing record and all saved app choices, then return to onboarding."
                 )
             }
         }
@@ -184,7 +184,7 @@ struct AboutRoamControlView: View {
     private var quickStart: some View {
         Section {
             stepRow(1, "Pair this iPhone once.")
-            stepRow(2, "Connect LocalDevVPN.")
+            stepRow(2, "Keep Developer Mode enabled.")
             stepRow(3, "Search, choose or drop a location.")
             stepRow(4, "Start a fixed location or preview a walking route.")
         } header: {

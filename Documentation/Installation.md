@@ -1,44 +1,35 @@
 # Installation
 
-Roam Control is not distributed through the App Store or TestFlight. Public beta builds are supplied as unsigned IPA files for users to sign with their own Apple account.
+This fork bundles its own packet tunnel, so it cannot be installed the way upstream Roam Control is. A Network Extension needs the `com.apple.developer.networking.networkextension` entitlement, which only a paid Apple Developer Program membership can sign. Free Apple accounts, SideStore and AltStore cannot install this build.
 
 ## Requirements
 
 - An iPhone running iOS 27 or newer.
 - Developer Mode enabled under **Settings → Privacy & Security**.
-- [LocalDevVPN](https://apps.apple.com/app/localdevvpn/id6755608044) installed on the iPhone.
-- SideStore, or Xcode on a Mac with an Apple development team.
+- Xcode 27 or newer on a Mac.
+- A paid Apple Developer Program membership.
 
-## Install with SideStore
+No companion app is required. Earlier versions needed LocalDevVPN; the tunnel now ships inside Roam Control.
 
-1. Download the IPA attached to the matching GitHub Release. Do not download an IPA from an untrusted mirror.
-2. In SideStore, tap **+** and choose the downloaded IPA.
-3. Allow SideStore to sign and install Roam Control with your Apple account.
-4. Open Roam Control and complete its introduction and device-pairing flow.
-5. Open LocalDevVPN and enable its local tunnel before starting a location.
-
-Free Apple accounts normally require sideloaded apps to be refreshed within seven days and limit the number of simultaneously active apps/App IDs. These are Apple signing limits, not Roam Control subscriptions.
-
-When updating, install the newer IPA over the existing copy. Deleting the app first also deletes its local settings and may require pairing again.
-
-## Build with Xcode
+## Build and install
 
 1. Clone the repository and open `RoamControl.xcodeproj`.
-2. Select the Roam Control target and choose your own team under **Signing & Capabilities**.
-3. Select a connected iPhone and press **Run**.
+2. Copy `Configuration/Local.private.xcconfig.example` to `Configuration/Local.private.xcconfig` and set `DEVELOPMENT_TEAM` to your team ID.
+3. Confirm both targets — `RoamControl` and `RoamControlTunnel` — show **Network Extensions** under **Signing & Capabilities**. Automatic signing registers the capability for both App IDs.
+4. Select a connected iPhone and press **Run**.
 
-The tracked build configuration has no Apple team or TelemetryDeck destination. Xcode may save your selected team locally. Do not commit signing material or `Configuration/Local.private.xcconfig`.
+The bundle identifiers are `com.clover.RoamControl` and `com.clover.RoamControl.tunnel`. The extension identifier must stay prefixed by the app's, because the app derives it at runtime.
 
-The simulator can test the interface but cannot complete the physical iPhone pairing handshake or start a real location session.
+## First run
 
-## Verify a release
+1. Complete the introduction and pair this iPhone.
+2. Choose a location and tap **Start Location**.
+3. Approve **"Roam Control Would Like to Add VPN Configurations"** when iOS asks. This happens once per install and requires Face ID, Touch ID or the passcode.
 
-Each GitHub Release publishes the IPA's SHA-256 checksum. On a Mac, calculate the checksum of the IPA you downloaded:
+The tunnel then appears under **Settings → General → VPN & Device Management**. It carries nothing but traffic addressed to `10.7.0.1`, which is this iPhone's own developer service; it sets no DNS and no default route, so the rest of the device's networking is untouched.
 
-```sh
-shasum -a 256 RoamControl-0.9.1-build47.ipa
-```
+## Notes
 
-Compare the result with the SHA-256 value shown on the matching GitHub Release before installing it.
-
-See the [user guide](UserGuide.md) for pairing and everyday operation.
+- Do not commit signing material or `Configuration/Local.private.xcconfig`.
+- The tracked build configuration has no Apple team and no telemetry destination.
+- iOS runs one packet tunnel at a time, so another active VPN will conflict with a location session.

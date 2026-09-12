@@ -45,8 +45,8 @@ Use this checklist before packaging an IPA or declaring a development build stab
 
 ## Fixed location on Wi-Fi
 
-- [ ] With LocalDevVPN connected, Start Location becomes active without mobile-data guidance.
-- [ ] With LocalDevVPN disconnected, Roam Control opens it quickly and resumes automatically.
+- [ ] On Wi-Fi, Start Location brings up the tunnel and becomes active without mobile-data guidance.
+- [ ] With the tunnel off, Start Location starts it and resumes automatically.
 - [ ] Selecting another place and tapping Update Location changes the active location without restarting the flow.
 - [ ] The active location persists while using another app.
 - [ ] Stop & Restore requires confirmation, then restores the real location.
@@ -54,7 +54,7 @@ Use this checklist before packaging an IPA or declaring a development build stab
 
 ## Fixed location on mobile data
 
-- [ ] Roam Control opens LocalDevVPN when needed.
+- [ ] Roam Control restarts its tunnel once when the device cannot be reached.
 - [ ] Turn Mobile Data Off appears only for the mobile-data path.
 - [ ] Turning mobile data off is detected automatically.
 - [ ] Continue works as a manual fallback.
@@ -91,7 +91,7 @@ Use this checklist before packaging an IPA or declaring a development build stab
 
 - [ ] Automatic, Light and Dark update the Settings screen immediately.
 - [ ] Standard, Satellite and Hybrid update the map.
-- [ ] Connection Health reports pairing, LocalDevVPN and location-session state accurately.
+- [ ] Connection Health reports pairing, tunnel and location-session state accurately.
 - [ ] Feedback links open the correct Bug Report and Feature Request forms.
 - [ ] Share Diagnostics opens the iOS share sheet and contains no keys or PINs.
 - [ ] About Roam Control describes the current controls and flows.
@@ -104,7 +104,7 @@ Use this checklist before packaging an IPA or declaring a development build stab
 - [ ] A build without the private TelemetryDeck configuration sends no requests.
 - [ ] Usage events never contain coordinates, place names, searches, routes, pairing data or diagnostics.
 - [ ] The built app contains `PrivacyInfo.xcprivacy` with tracking disabled.
-- [ ] Reset Roam Control clears app data, returns to onboarding and does not alter LocalDevVPN.
+- [ ] Reset Roam Control clears app data, returns to onboarding and leaves the VPN configuration in place.
 
 ## Accessibility and layout
 

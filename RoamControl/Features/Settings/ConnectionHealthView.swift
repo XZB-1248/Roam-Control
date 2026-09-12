@@ -4,7 +4,6 @@ import UIKit
 struct ConnectionHealthView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @State private var diagnostics = ConnectionDiagnosticsCoordinator()
     @State private var isShowingDeviceSetup = false
     @State private var didCopyDiagnostics = false
 
@@ -19,10 +18,10 @@ struct ConnectionHealthView: View {
                 )
 
                 healthRow(
-                    title: "LocalDevVPN",
-                    value: localDevVPNValue,
-                    symbol: localDevVPNSymbol,
-                    color: localDevVPNColor
+                    title: "Local Tunnel",
+                    value: tunnelValue,
+                    symbol: tunnelSymbol,
+                    color: tunnelColor
                 )
 
                 healthRow(
@@ -73,7 +72,7 @@ struct ConnectionHealthView: View {
             } header: {
                 Text("Connection Check")
             } footer: {
-                Text("This checks the saved pairing record and whether the paired iPhone is visible through LocalDevVPN. It never starts, changes, or stops your location.")
+                Text("This brings up the local tunnel, checks the saved pairing record, and confirms the paired iPhone is visible. It never starts, changes, or stops your location.")
             }
 
             Section {
@@ -100,10 +99,6 @@ struct ConnectionHealthView: View {
                     Label("Pairing & Connection", systemImage: "iphone.and.arrow.forward")
                 }
                 .foregroundStyle(.primary)
-
-                Link(destination: appModel.localDevVPNInstallURL) {
-                    Label("Open LocalDevVPN in App Store", systemImage: "arrow.up.right.square")
-                }
             }
         }
         .navigationTitle("Connection Health")
@@ -115,6 +110,10 @@ struct ConnectionHealthView: View {
             PairingSetupView()
                 .environment(appModel)
         }
+    }
+
+    private var diagnostics: ConnectionDiagnosticsCoordinator {
+        appModel.connectionDiagnostics
     }
 
     private var activeTarget: LocationTarget? {
@@ -157,43 +156,40 @@ struct ConnectionHealthView: View {
         }
     }
 
-    private var localDevVPNValue: String {
-        switch diagnostics.state {
-        case .notRun:
-            if case .active = appModel.deviceSession.phase { return "Connected" }
-            return "Not checked"
-        case .running: return "Checking"
-        case .passed: return "Reachable"
-        case .failed: return "Not reachable"
+    private var tunnelValue: String {
+        switch appModel.tunnel.status {
+        case .unavailable: "Needs a physical iPhone"
+        case .notConfigured: "Not set up"
+        case .disconnected: "Off"
+        case .connecting: "Starting"
+        case .connected: "Connected"
+        case .failed: "Failed"
         }
     }
 
-    private var localDevVPNSymbol: String {
-        switch diagnostics.state {
-        case .notRun:
-            if case .active = appModel.deviceSession.phase { return "checkmark.circle.fill" }
-            return "questionmark.circle"
-        case .running: return "arrow.triangle.2.circlepath"
-        case .passed: return "checkmark.circle.fill"
-        case .failed: return "xmark.circle.fill"
+    private var tunnelSymbol: String {
+        switch appModel.tunnel.status {
+        case .unavailable, .notConfigured: "questionmark.circle"
+        case .disconnected: "pause.circle"
+        case .connecting: "arrow.triangle.2.circlepath"
+        case .connected: "checkmark.circle.fill"
+        case .failed: "xmark.circle.fill"
         }
     }
 
-    private var localDevVPNColor: Color {
-        switch diagnostics.state {
-        case .notRun:
-            if case .active = appModel.deviceSession.phase { return .green }
-            return .secondary
-        case .running: return .blue
-        case .passed: return .green
-        case .failed: return .red
+    private var tunnelColor: Color {
+        switch appModel.tunnel.status {
+        case .unavailable, .notConfigured, .disconnected: .secondary
+        case .connecting: .blue
+        case .connected: .green
+        case .failed: .red
         }
     }
 
     private var sessionValue: String {
         switch appModel.deviceSession.phase {
         case .idle: "Inactive"
-        case .openingLocalDevVPN: "Opening LocalDevVPN"
+        case .startingTunnel: "Starting local tunnel"
         case .discovering: "Finding this iPhone"
         case .connecting: "Connecting"
         case .active: "Active"
@@ -205,7 +201,7 @@ struct ConnectionHealthView: View {
     private var sessionSymbol: String {
         switch appModel.deviceSession.phase {
         case .idle: "pause.circle"
-        case .openingLocalDevVPN, .discovering, .connecting: "arrow.triangle.2.circlepath"
+        case .startingTunnel, .discovering, .connecting: "arrow.triangle.2.circlepath"
         case .active: "location.circle.fill"
         case .stopping: "stop.circle"
         case .failed: "exclamationmark.triangle.fill"
@@ -215,7 +211,7 @@ struct ConnectionHealthView: View {
     private var sessionColor: Color {
         switch appModel.deviceSession.phase {
         case .idle: .secondary
-        case .openingLocalDevVPN, .discovering, .connecting, .stopping: .blue
+        case .startingTunnel, .discovering, .connecting, .stopping: .blue
         case .active: .green
         case .failed: .red
         }
@@ -303,7 +299,7 @@ struct ConnectionHealthView: View {
         App: \(appVersion) (\(build))
         iOS: \(UIDevice.current.systemVersion)
         Pairing: \(pairingValue)
-        LocalDevVPN: \(localDevVPNValue)
+        Local tunnel: \(tunnelValue)
         Session: \(sessionValue)
         Last connection check: \(checked)
         Connection check result: \(diagnosticResultStatus)

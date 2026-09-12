@@ -8,7 +8,6 @@ struct LocationSelectionCard: View {
     let isFavourite: Bool
     let isPaired: Bool
     let sessionPhase: DeviceSessionPhase
-    let localDevVPNInstallURL: URL
     let isPreviewingWalkingRoute: Bool
     let walkingRouteError: String?
     let onToggleFavourite: () -> Void
@@ -110,13 +109,6 @@ struct LocationSelectionCard: View {
                     .frame(maxWidth: .infinity, alignment: .center)
                     .fixedSize(horizontal: false, vertical: true)
 
-                if shouldOfferLocalDevVPN {
-                    Link(destination: localDevVPNInstallURL) {
-                        Label("Get LocalDevVPN", systemImage: "arrow.up.right.square")
-                            .font(.subheadline.weight(.semibold))
-                    }
-                    .frame(maxWidth: .infinity)
-                }
             } else {
                 HStack(spacing: 14) {
                     Image(systemName: "hand.tap")
@@ -262,7 +254,7 @@ struct LocationSelectionCard: View {
 
     private var isWorking: Bool {
         switch sessionPhase {
-        case .openingLocalDevVPN, .discovering, .connecting, .stopping:
+        case .startingTunnel, .discovering, .connecting, .stopping:
             true
         case .idle, .active, .failed:
             false
@@ -274,15 +266,10 @@ struct LocationSelectionCard: View {
         return false
     }
 
-    private var shouldOfferLocalDevVPN: Bool {
-        guard case .failed(let message) = sessionPhase else { return false }
-        return message.localizedCaseInsensitiveContains("Install LocalDevVPN")
-    }
-
     private var primaryTitle: String {
         switch sessionPhase {
-        case .openingLocalDevVPN:
-            "Opening LocalDevVPN…"
+        case .startingTunnel:
+            "Starting Local Tunnel…"
         case .discovering:
             "Finding This iPhone…"
         case .connecting:
@@ -303,7 +290,7 @@ struct LocationSelectionCard: View {
         case .active: isShowingActiveTarget ? "stop.circle.fill" : "location.fill"
         case .failed: "arrow.clockwise"
         case .idle: "location.fill"
-        case .openingLocalDevVPN, .discovering, .connecting, .stopping: "hourglass"
+        case .startingTunnel, .discovering, .connecting, .stopping: "hourglass"
         }
     }
 
@@ -315,7 +302,7 @@ struct LocationSelectionCard: View {
         switch sessionPhase {
         case .idle, .failed:
             true
-        case .openingLocalDevVPN, .discovering, .connecting, .active, .stopping:
+        case .startingTunnel, .discovering, .connecting, .active, .stopping:
             false
         }
     }
@@ -324,7 +311,7 @@ struct LocationSelectionCard: View {
         switch sessionPhase {
         case .idle, .active:
             true
-        case .openingLocalDevVPN, .discovering, .connecting, .stopping, .failed:
+        case .startingTunnel, .discovering, .connecting, .stopping, .failed:
             false
         }
     }
@@ -335,8 +322,8 @@ struct LocationSelectionCard: View {
             return isPaired
                 ? "Start when ready. Stop restores this iPhone's real location."
                 : "Pair this iPhone before starting location control."
-        case .openingLocalDevVPN:
-            return "Roam Control will return automatically after the tunnel starts."
+        case .startingTunnel:
+            return "Bringing up the private local tunnel."
         case .discovering:
             return "Finding the paired iPhone through the private local tunnel."
         case .connecting:

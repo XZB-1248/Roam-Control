@@ -1,13 +1,10 @@
-import BackgroundTasks
 import Foundation
 import Network
 import Observation
-import RoamPairingFFI
-import UIKit
 
 enum DeviceSessionPhase: Equatable {
     case idle
-    case openingLocalDevVPN
+    case startingTunnel
     case discovering
     case connecting
     case active(LocationTarget)
@@ -27,27 +24,21 @@ enum ActiveLocationUpdateResult: Equatable {
     case failed
 }
 
+/// Sequences the tunnel, the browser and the session runner, and turns what they
+/// report into the phase the interface renders. It owns no networking itself.
 @MainActor
 @Observable
-final class LocalDeviceSessionCoordinator: NSObject {
+final class LocalDeviceSessionCoordinator {
     private struct PendingSession {
         let pairingRecord: Data
         let target: LocationTarget
     }
 
-    private struct RemotePairingService: Sendable {
-        let port: UInt16
-        let identifier: String
-        let authTag: String
-    }
-
-    private static var taskIdentifierPrefix: String {
-        BackgroundTaskIdentifier.prefix(for: "location")
-    }
-
-    private static let localDevVPNPeerAddress = "10.7.0.1"
-    private static let enableURL = URL(string: "localdevvpn://enable?scheme=roamcontrol")!
     private static let minimumRestorationDisplayDuration: TimeInterval = 1.2
+    private static let discoveryTimeout: Duration = .seconds(30)
+    private static let connectionHelpDelay: Duration = .seconds(5)
+    private static let probeRetryDelay: Duration = .milliseconds(650)
+    private static let maximumProbeAttempts = 3
 
     private(set) var phase: DeviceSessionPhase = .idle {
         didSet { onPhaseChange?(phase) }
@@ -56,115 +47,341 @@ final class LocalDeviceSessionCoordinator: NSObject {
 
     var onPhaseChange: ((DeviceSessionPhase) -> Void)?
 
-    private let browser = NetServiceBrowser()
-    private let wifiPathMonitor = NWPathMonitor(requiredInterfaceType: .wifi)
-    private let wifiPathMonitorQueue = DispatchQueue(
-        label: "com.sean.roamcontrol.wifi-path",
-        qos: .utility
-    )
-    private let serviceProbeQueue = DispatchQueue(
-        label: "com.sean.roamcontrol.service-probe",
-        qos: .userInitiated
-    )
-    private var discoveredServices: [NetService] = []
-    private var discoveryTimeout: Task<Void, Never>?
-    private var automaticDiscoveryTask: Task<Void, Never>?
-    private var networkDecisionTask: Task<Void, Never>?
-    private var mobileDataDiscoveryLoopTask: Task<Void, Never>?
-    private var mobileDataGuidanceDelay: Task<Void, Never>?
-    private var localDevVPNProbeTask: Task<Void, Never>?
-    private var localDevVPNReturnTimeout: Task<Void, Never>?
-    private var pendingSession: PendingSession?
-    private var resolvedService: RemotePairingService?
-    private var sawNonMatchingService = false
-    private var isDiscoveringServices = false
-    private var hasRequestedLocalDevVPNThisAttempt = false
-    private var wifiPathStatusIsKnown = false
-    private var isWiFiPathSatisfied = false
-    private var isMobileDataStartupMode = false
-    private var serviceProbeConnection: NWConnection?
-    private var serviceProbeTimeout: Task<Void, Never>?
-    private var serviceProbeRetryTask: Task<Void, Never>?
-    private var serviceProbeAttemptCount = 0
+    private let tunnel: LocalTunnelController
+    private let browser = RemotePairingBrowser()
+    private let probe = LocalTunnelReachabilityProbe()
+    private let runner = LocationSessionRunner()
+    private let wifi = WiFiAvailability()
 
-    private var activeSession: OpaquePointer?
-    private var activeRunIdentifier: UUID?
-    private var submittedTaskIdentifier: String?
-    private var backgroundTask: BGContinuedProcessingTask?
-    private var backgroundProgressTask: Task<Void, Never>?
-    private var backgroundTaskFinished = true
-    private var workerIsRunning = false
+    private var pendingSession: PendingSession?
+    private var startupTask: Task<Void, Never>?
+    private var discoveryTimeoutTask: Task<Void, Never>?
+    private var connectionHelpTask: Task<Void, Never>?
+    private var mobileDataDiscoveryLoop: Task<Void, Never>?
+    private var probeRetryTask: Task<Void, Never>?
+
+    private var probeAttempts = 0
+    private var isVerifyingReachability = false
+    private var hasRestartedTunnelThisAttempt = false
+    private var isMobileDataStartupMode = false
     private var cancellationRequested = false
     private var pendingFailureMessage: String?
-    private var restorationDisplayStartDate: Date?
+    private var restorationDisplayStart: Date?
 
-    override init() {
-        super.init()
-        browser.delegate = self
-        browser.includesPeerToPeer = true
-        wifiPathMonitor.pathUpdateHandler = { [weak self] path in
-            let isSatisfied = path.status == .satisfied
-            Task { @MainActor [weak self] in
-                self?.wifiPathStatusIsKnown = true
-                self?.isWiFiPathSatisfied = isSatisfied
-            }
+    init(tunnel: LocalTunnelController) {
+        self.tunnel = tunnel
+        runner.onEvent = { [weak self] event in
+            self?.handle(event)
         }
-        wifiPathMonitor.start(queue: wifiPathMonitorQueue)
     }
 
     var isBusy: Bool {
         switch phase {
-        case .openingLocalDevVPN, .discovering, .connecting, .stopping:
-            true
-        case .idle, .active, .failed:
-            false
+        case .startingTunnel, .discovering, .connecting, .stopping: true
+        case .idle, .active, .failed: false
         }
     }
 
+    /// Used to keep a preference change from cutting a live session off.
+    var needsTunnel: Bool {
+        switch phase {
+        case .idle, .failed: false
+        case .startingTunnel, .discovering, .connecting, .active, .stopping: true
+        }
+    }
+
+    // MARK: - Starting
+
     func start(pairingRecord: Data, target: LocationTarget) {
-        guard !workerIsRunning, !isBusy else { return }
+        guard !runner.isRunning, !isBusy else { return }
 
 #if targetEnvironment(simulator)
         phase = .failed("A real iPhone is required to start a location session.")
 #else
         cancellationRequested = false
         pendingFailureMessage = nil
-        restorationDisplayStartDate = nil
+        restorationDisplayStart = nil
         mobileDataGuidance = nil
-        hasRequestedLocalDevVPNThisAttempt = false
+        hasRestartedTunnelThisAttempt = false
         isMobileDataStartupMode = false
         pendingSession = PendingSession(pairingRecord: pairingRecord, target: target)
-        resolvedService = nil
-        phase = .discovering
-        routeStartupForCurrentNetwork()
+
+        phase = .startingTunnel
+        startupTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try await self.tunnel.start()
+            } catch {
+                self.fail(error.localizedDescription)
+                return
+            }
+
+            guard !Task.isCancelled, self.pendingSession != nil else { return }
+            await self.routeStartupForCurrentNetwork()
+        }
 #endif
     }
 
-    func handleOpenURL(_ url: URL) {
-        guard url.scheme?.lowercased() == "roamcontrol" else { return }
+    /// On mobile data, Bonjour only reaches the tunnel once cellular is briefly
+    /// out of the way.
+    private func routeStartupForCurrentNetwork() async {
         guard pendingSession != nil else { return }
-        guard phase == .openingLocalDevVPN || phase == .discovering else { return }
 
-        localDevVPNReturnTimeout?.cancel()
-        localDevVPNReturnTimeout = nil
-        guard mobileDataGuidance != .turnOff else { return }
-        if isMobileDataStartupMode {
-            enterMobileDataGuidance()
-        } else {
+        if await wifi.isAvailable() {
             beginDiscovery(showConnectionHelpIfUnavailable: true)
+        } else {
+            isMobileDataStartupMode = true
+            enterMobileDataGuidance()
         }
     }
 
+    // MARK: - Discovery
+
+    private func beginDiscovery(
+        reportTimeout: Bool = true,
+        showConnectionHelpIfUnavailable: Bool = false
+    ) {
+        guard let pendingSession else { return }
+
+        stopDiscovery()
+        phase = .discovering
+
+        browser.start(matching: pendingSession.pairingRecord) { [weak self] event in
+            self?.handle(event)
+        }
+
+        if showConnectionHelpIfUnavailable {
+            connectionHelpTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: Self.connectionHelpDelay)
+                guard !Task.isCancelled, let self, self.isAwaitingDiscovery else { return }
+                self.mobileDataGuidance = .connectionHelp
+            }
+        }
+
+        if reportTimeout {
+            discoveryTimeoutTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: Self.discoveryTimeout)
+                guard !Task.isCancelled, let self, self.phase == .discovering else { return }
+                self.fail(self.browser.hasSeenUnmatchedService
+                    ? "Roam Control found an outdated device announcement. Turn the local tunnel off and on in Settings, then try again."
+                    : "Roam Control could not find this iPhone through the local tunnel. Check that it is connected and try again."
+                )
+            }
+        }
+    }
+
+    private var isAwaitingDiscovery: Bool {
+        pendingSession != nil && phase == .discovering && !runner.isRunning
+    }
+
+    private func handle(_ event: RemotePairingBrowser.Event) {
+        switch event {
+        case .matched(let service):
+            // A refreshed TXT record re-announces a service already being
+            // checked; restarting the probe would read it as unreachable.
+            guard isAwaitingDiscovery, !isVerifyingReachability, probeRetryTask == nil else { return }
+            verifyReachability(of: service)
+        case .unmatched:
+            break
+        case .unavailable:
+            fail("Local Network access is required to find this iPhone.")
+        }
+    }
+
+    private func stopDiscovery() {
+        browser.stop()
+        probe.cancel()
+        discoveryTimeoutTask?.cancel()
+        discoveryTimeoutTask = nil
+        connectionHelpTask?.cancel()
+        connectionHelpTask = nil
+        probeRetryTask?.cancel()
+        probeRetryTask = nil
+        probeAttempts = 0
+        isVerifyingReachability = false
+    }
+
+    // MARK: - Reachability
+
+    private func verifyReachability(of service: RemotePairingService) {
+        probeAttempts += 1
+        isVerifyingReachability = true
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let isReachable = await self.probe.canReach(port: service.port)
+            self.isVerifyingReachability = false
+            guard self.isAwaitingDiscovery else { return }
+
+            if isReachable {
+                self.probeAttempts = 0
+                self.beginSession(with: service)
+            } else {
+                self.handleUnreachableService(service)
+            }
+        }
+    }
+
+    private func handleUnreachableService(_ service: RemotePairingService) {
+        if isMobileDataStartupMode {
+            probeAttempts = 0
+            return
+        }
+
+        if !hasRestartedTunnelThisAttempt {
+            probeAttempts = 0
+            restartTunnelAndRetryDiscovery()
+            return
+        }
+
+        guard probeAttempts < Self.maximumProbeAttempts else {
+            probeAttempts = 0
+            mobileDataGuidance = .connectionHelp
+            return
+        }
+
+        probeRetryTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: Self.probeRetryDelay)
+            guard !Task.isCancelled, let self else { return }
+            self.probeRetryTask = nil
+            self.verifyReachability(of: service)
+        }
+    }
+
+    /// Cycling the tunnel fixes most "found it but cannot reach it" cases.
+    private func restartTunnelAndRetryDiscovery() {
+        guard pendingSession != nil else { return }
+
+        hasRestartedTunnelThisAttempt = true
+        stopDiscovery()
+        phase = .startingTunnel
+
+        startupTask?.cancel()
+        startupTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try await self.tunnel.restart()
+            } catch {
+                self.fail(error.localizedDescription)
+                return
+            }
+
+            guard !Task.isCancelled, self.pendingSession != nil else { return }
+            self.beginDiscovery(showConnectionHelpIfUnavailable: true)
+        }
+    }
+
+    // MARK: - Session
+
+    private func beginSession(with service: RemotePairingService) {
+        guard let pendingSession else { return }
+
+        stopDiscovery()
+        mobileDataGuidance = nil
+        mobileDataDiscoveryLoop?.cancel()
+        mobileDataDiscoveryLoop = nil
+        phase = .connecting
+
+        runner.start(
+            pairingRecord: pendingSession.pairingRecord,
+            service: service,
+            target: pendingSession.target,
+            subtitle: "Connecting to \(pendingSession.target.name)…"
+        )
+    }
+
+    private func handle(_ event: LocationSessionRunner.Event) {
+        switch event {
+        case .schedulerUnavailable:
+            fail("iOS could not prepare the location session. Close Roam Control, reopen it, and try again.")
+
+        case .submissionRejected:
+            recoverFromConnectionSetback()
+
+        case .active:
+            guard !cancellationRequested, let target = pendingSession?.target else { return }
+            mobileDataDiscoveryLoop?.cancel()
+            mobileDataDiscoveryLoop = nil
+            phase = .active(target)
+            if mobileDataGuidance == .turnOff {
+                mobileDataGuidance = .turnBackOn
+            }
+            runner.describe(subtitle: "Location active at \(target.name)")
+
+        case .expired:
+            cancellationRequested = true
+            pendingFailureMessage = nil
+            mobileDataGuidance = nil
+            phase = .stopping
+
+        case .finished(let outcome):
+            handleSessionFinished(outcome)
+        }
+    }
+
+    private func handleSessionFinished(_ outcome: LocationSessionRunner.Outcome) {
+        if let pendingFailureMessage {
+            self.pendingFailureMessage = nil
+            finishSession(with: .failed(pendingFailureMessage))
+            return
+        }
+
+        if cancellationRequested {
+            cancellationRequested = false
+            clearPendingSession()
+            tunnel.stopUnlessKeptRunning()
+            completeRestoration()
+            return
+        }
+
+        switch outcome {
+        case .success:
+            finishSession(with: .idle)
+
+        case .failure(let message):
+            guard isRecoverableConnectionFailure(message) else {
+                finishSession(with: .failed(Self.presentable(message)))
+                return
+            }
+            recoverFromConnectionSetback()
+        }
+    }
+
+    private func recoverFromConnectionSetback() {
+        guard pendingSession != nil else { return }
+
+        if isMobileDataStartupMode {
+            enterMobileDataGuidance()
+        } else if hasRestartedTunnelThisAttempt {
+            phase = .discovering
+            mobileDataGuidance = .connectionHelp
+        } else {
+            restartTunnelAndRetryDiscovery()
+        }
+    }
+
+    private func isRecoverableConnectionFailure(_ message: String) -> Bool {
+        // Matched against the native engine's own wording, which still names
+        // LocalDevVPN. `presentable(_:)` rewrites it for display.
+        message.localizedCaseInsensitiveContains("through LocalDevVPN")
+            || message.localizedCaseInsensitiveContains("make the iPhone connection available")
+            || message.localizedCaseInsensitiveContains("open the secure device tunnel")
+    }
+
+    private static func presentable(_ nativeMessage: String) -> String {
+        nativeMessage.replacingOccurrences(
+            of: "LocalDevVPN",
+            with: "the local tunnel",
+            options: .caseInsensitive
+        )
+    }
+
+    // MARK: - Updating and stopping
+
     @discardableResult
     func updateLocation(_ target: LocationTarget) -> ActiveLocationUpdateResult {
-        guard
-            workerIsRunning,
-            case .active = phase,
-            let activeSession,
-            let pendingSession
-        else { return .unavailable }
-
-        guard rc_location_session_update(activeSession, target.latitude, target.longitude) == 0 else {
+        guard case .active = phase, let pendingSession else { return .unavailable }
+        guard runner.updateLocation(target) else {
             fail("Roam Control could not update the active location.")
             return .failed
         }
@@ -174,120 +391,38 @@ final class LocalDeviceSessionCoordinator: NSObject {
             target: target
         )
         phase = .active(target)
-        backgroundTask?.updateTitle(
-            "Roam Control",
-            subtitle: "Location active at \(target.name)"
-        )
+        runner.describe(subtitle: "Location active at \(target.name)")
         return .updated
-    }
-
-    func openLocalDevVPN() {
-#if !targetEnvironment(simulator)
-        if pendingSession != nil, !workerIsRunning {
-            openLocalDevVPNForPendingSession()
-            return
-        }
-
-        UIApplication.shared.open(Self.enableURL) { [weak self] opened in
-            guard !opened else { return }
-            Task { @MainActor in
-                self?.fail("Install LocalDevVPN before starting a location session.")
-            }
-        }
-#endif
-    }
-
-    func dismissMobileDataGuidance() {
-        mobileDataGuidance = nil
-    }
-
-    func confirmMobileDataIsOff() {
-        guard mobileDataGuidance == .turnOff, pendingSession != nil else { return }
-        automaticDiscoveryTask?.cancel()
-        mobileDataDiscoveryLoopTask?.cancel()
-        mobileDataDiscoveryLoopTask = nil
-        automaticDiscoveryTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .milliseconds(750))
-            guard !Task.isCancelled, let self else { return }
-            self.automaticDiscoveryTask = nil
-            self.startMobileDataDiscoveryLoop()
-        }
-    }
-
-    func useMobileDataGuidance() {
-        guard mobileDataGuidance == .connectionHelp, pendingSession != nil else { return }
-        isMobileDataStartupMode = true
-        enterMobileDataGuidance()
-    }
-
-    func retryConnection() {
-        guard mobileDataGuidance == .connectionHelp, pendingSession != nil else { return }
-        mobileDataGuidance = nil
-        resolvedService = nil
-        beginDiscovery(showConnectionHelpIfUnavailable: true)
-    }
-
-    func appDidBecomeActive() {
-        if
-            phase == .openingLocalDevVPN,
-            pendingSession != nil,
-            !workerIsRunning
-        {
-            automaticDiscoveryTask?.cancel()
-            automaticDiscoveryTask = Task { @MainActor [weak self] in
-                try? await Task.sleep(for: .milliseconds(900))
-                guard
-                    !Task.isCancelled,
-                    let self,
-                    self.pendingSession != nil,
-                    self.phase == .openingLocalDevVPN,
-                    !self.workerIsRunning
-                else { return }
-
-                self.automaticDiscoveryTask = nil
-                if self.isMobileDataStartupMode {
-                    self.enterMobileDataGuidance()
-                } else {
-                    self.beginDiscovery(showConnectionHelpIfUnavailable: true)
-                }
-            }
-            return
-        }
-
-        guard mobileDataGuidance == .turnOff else { return }
-        startMobileDataDiscoveryLoop()
     }
 
     func stop() {
         mobileDataGuidance = nil
+
         switch phase {
         case .idle:
             return
-        case .openingLocalDevVPN, .discovering:
+        case .startingTunnel, .discovering:
             cancellationRequested = true
-            cleanupDiscovery()
+            startupTask?.cancel()
+            stopDiscovery()
             clearPendingSession()
+            tunnel.stopUnlessKeptRunning()
             phase = .idle
-        case .connecting:
+        case .connecting, .active:
             cancellationRequested = true
-            phase = .stopping
-            if let activeSession {
-                rc_location_session_cancel(activeSession)
-            } else if let submittedTaskIdentifier {
-                BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: submittedTaskIdentifier)
-                clearPendingSession()
-                phase = .idle
+            if case .active = phase {
+                restorationDisplayStart = .now
+                runner.describe(subtitle: "Restoring real location…")
             }
-        case .active:
-            cancellationRequested = true
-            restorationDisplayStartDate = .now
             phase = .stopping
-            backgroundTask?.updateTitle(
-                "Roam Control",
-                subtitle: "Restoring real location…"
-            )
-            if let activeSession {
-                rc_location_session_cancel(activeSession)
+
+            guard runner.cancel() else {
+                // Nothing was running yet, so no `.finished` is coming.
+                cancellationRequested = false
+                clearPendingSession()
+                tunnel.stopUnlessKeptRunning()
+                phase = .idle
+                return
             }
         case .stopping:
             break
@@ -299,732 +434,169 @@ final class LocalDeviceSessionCoordinator: NSObject {
 
     func reset() {
         stop()
-        if !workerIsRunning {
+        if !runner.isRunning {
             clearPendingSession()
             phase = .idle
         }
     }
 
-    private func beginDiscovery(
-        reportTimeout: Bool = true,
-        openLocalDevVPNIfUnavailable: Bool = false,
-        showConnectionHelpIfUnavailable: Bool = false
-    ) {
-        cleanupDiscovery()
-        sawNonMatchingService = false
-        isDiscoveringServices = true
-        phase = .discovering
-        browser.delegate = self
-        browser.searchForServices(ofType: "_remotepairing._tcp.", inDomain: "local.")
-
-        if showConnectionHelpIfUnavailable {
-            mobileDataGuidanceDelay = Task { @MainActor [weak self] in
-                try? await Task.sleep(for: .seconds(5))
-                guard
-                    !Task.isCancelled,
-                    let self,
-                    self.pendingSession != nil,
-                    self.phase == .discovering,
-                    !self.workerIsRunning,
-                    self.resolvedService == nil
-                else { return }
-                self.mobileDataGuidance = .connectionHelp
-            }
-        }
-
-        if openLocalDevVPNIfUnavailable {
-            localDevVPNProbeTask = Task { @MainActor [weak self] in
-                try? await Task.sleep(for: .seconds(2.5))
-                guard
-                    !Task.isCancelled,
-                    let self,
-                    self.pendingSession != nil,
-                    self.phase == .discovering,
-                    !self.workerIsRunning,
-                    self.resolvedService == nil
-                else { return }
-
-                self.localDevVPNProbeTask = nil
-                self.openLocalDevVPNForPendingSession()
-            }
-        }
-
-        if reportTimeout {
-            discoveryTimeout = Task { @MainActor [weak self] in
-                try? await Task.sleep(for: .seconds(30))
-                guard let self, self.phase == .discovering else { return }
-                if self.sawNonMatchingService {
-                    self.fail(
-                        "Roam Control found an outdated device announcement. Toggle LocalDevVPN off and on, then try again."
-                    )
-                } else {
-                    self.fail(
-                        "Roam Control could not find this iPhone through LocalDevVPN. Check that the tunnel is enabled and try again."
-                    )
-                }
-            }
-        }
-    }
-
-    private func resolve(_ service: NetService) {
-        service.delegate = self
-        service.includesPeerToPeer = true
-        service.schedule(in: .main, forMode: .common)
-        service.resolve(withTimeout: 8)
-        discoveredServices.append(service)
-    }
-
-    private func useResolvedService(_ service: NetService) {
-        guard phase == .discovering else { return }
-        guard service.port > 0, service.port <= Int(UInt16.max) else { return }
-        guard
-            let txtData = service.txtRecordData(),
-            let identifierData = NetService.dictionary(fromTXTRecord: txtData)["identifier"],
-            let authTagData = NetService.dictionary(fromTXTRecord: txtData)["authTag"]
-        else { return }
-
-        let identifier = String(decoding: identifierData, as: UTF8.self)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let authTag = String(decoding: authTagData, as: UTF8.self)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !identifier.isEmpty, !authTag.isEmpty else { return }
-        guard let pairingRecord = pendingSession?.pairingRecord else { return }
-
-        let matchesPairedDevice = pairingRecord.withUnsafeBytes { recordBytes in
-            guard let recordBaseAddress = recordBytes.bindMemory(to: UInt8.self).baseAddress else {
-                return false
-            }
-
-            return identifier.withCString { serviceIdentifier in
-                authTag.withCString { authTag in
-                    rc_pairing_record_matches_service(
-                        recordBaseAddress,
-                        pairingRecord.count,
-                        serviceIdentifier,
-                        authTag
-                    ) == 1
-                }
-            }
-        }
-
-        guard matchesPairedDevice else {
-            sawNonMatchingService = true
-            service.startMonitoring()
-            return
-        }
-
-        guard serviceProbeConnection == nil, serviceProbeRetryTask == nil else { return }
-        verifyServiceIsReachable(RemotePairingService(
-            port: UInt16(service.port),
-            identifier: identifier,
-            authTag: authTag
-        ))
-    }
-
-    private func submitLocationTask() {
-        guard let pendingSession, resolvedService != nil else {
-            fail("Roam Control could not prepare the selected location.")
-            return
-        }
-
-        phase = .connecting
-        let identifier = "\(Self.taskIdentifierPrefix).\(UUID().uuidString)"
-        let wasRegistered = BGTaskScheduler.shared.register(
-            forTaskWithIdentifier: identifier,
-            using: .main
-        ) { [weak self] task in
-            guard let task = task as? BGContinuedProcessingTask else {
-                task.setTaskCompleted(success: false)
-                return
-            }
-
-            MainActor.assumeIsolated {
-                guard let self else {
-                    task.setTaskCompleted(success: false)
-                    return
-                }
-                self.beginLocationSession(with: task)
-            }
-        }
-
-        guard wasRegistered else {
-            fail("iOS could not prepare the location session. Close Roam Control, reopen it, and try again.")
-            return
-        }
-
-        submittedTaskIdentifier = identifier
-        let request = BGContinuedProcessingTaskRequest(
-            identifier: identifier,
-            title: "Roam Control",
-            subtitle: "Connecting to \(pendingSession.target.name)…"
-        )
-        request.strategy = .fail
-
-        Task {
-            do {
-                try await BGTaskScheduler.shared.submitTaskRequest(request)
-            } catch {
-                BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: identifier)
-                self.submittedTaskIdentifier = nil
-                self.resolvedService = nil
-                if self.isMobileDataStartupMode {
-                    self.enterMobileDataGuidance()
-                } else if self.hasRequestedLocalDevVPNThisAttempt {
-                    self.phase = .discovering
-                    self.mobileDataGuidance = .connectionHelp
-                } else {
-                    self.openLocalDevVPNForPendingSession()
-                }
-            }
-        }
-    }
-
-    private func beginLocationSession(with task: BGContinuedProcessingTask) {
-        guard phase == .connecting, !workerIsRunning else {
-            task.setTaskCompleted(success: false)
-            return
-        }
-
-        backgroundTask = task
-        backgroundTaskFinished = false
-        task.progress.totalUnitCount = 5_760
-        task.progress.completedUnitCount = 1
-        task.expirationHandler = { [weak self] in
-            Task { @MainActor in
-                self?.locationTaskExpired()
-            }
-        }
-        startBackgroundProgress(for: task)
-
-        runNativeLocationSession()
-    }
-
-    private func startBackgroundProgress(for task: BGContinuedProcessingTask) {
-        backgroundProgressTask?.cancel()
-        backgroundProgressTask = Task { @MainActor [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(15))
-                guard
-                    !Task.isCancelled,
-                    let self,
-                    self.backgroundTask === task,
-                    !self.backgroundTaskFinished
-                else { return }
-
-                task.progress.completedUnitCount = min(
-                    task.progress.completedUnitCount + 1,
-                    task.progress.totalUnitCount - 1
-                )
-            }
-        }
-    }
-
-    private func runNativeLocationSession() {
-        guard let pendingSession, let resolvedService else {
-            fail("Roam Control lost the location session details.")
-            return
-        }
-        guard let session = rc_location_session_create() else {
-            fail("Roam Control could not start its location engine.")
-            return
-        }
-
-        let runIdentifier = UUID()
-        activeRunIdentifier = runIdentifier
-        activeSession = session
-        workerIsRunning = true
-
-        let sessionBits = UInt(bitPattern: session)
-        let contextBits = UInt(bitPattern: Unmanaged.passRetained(self).toOpaque())
-        let pairingRecord = pendingSession.pairingRecord
-        let target = pendingSession.target
-        let peerAddressString = Self.localDevVPNPeerAddress
-
-        DispatchQueue.global(qos: .userInitiated).async {
-            guard
-                let session = OpaquePointer(bitPattern: sessionBits),
-                let context = UnsafeMutableRawPointer(bitPattern: contextBits)
-            else { return }
-
-            var result = RCLocationResult()
-            let returnCode = pairingRecord.withUnsafeBytes { recordBytes in
-                guard let recordBaseAddress = recordBytes.bindMemory(to: UInt8.self).baseAddress else {
-                    return Int32(-1)
-                }
-
-                return peerAddressString.withCString { peerAddress in
-                    resolvedService.identifier.withCString { serviceIdentifier in
-                        resolvedService.authTag.withCString { authTag in
-                            rc_location_session_run(
-                                session,
-                                recordBaseAddress,
-                                pairingRecord.count,
-                                peerAddress,
-                                resolvedService.port,
-                                serviceIdentifier,
-                                authTag,
-                                target.latitude,
-                                target.longitude,
-                                locationStartedCallback,
-                                context,
-                                &result
-                            )
-                        }
-                    }
-                }
-            }
-
-            let outcome = NativeLocationOutcome(result: result, returnCode: returnCode)
-            rc_location_result_destroy(&result)
-
-            DispatchQueue.main.async {
-                if let session = OpaquePointer(bitPattern: sessionBits) {
-                    rc_location_session_destroy(session)
-                }
-                let coordinator = Unmanaged<LocalDeviceSessionCoordinator>
-                    .fromOpaque(context)
-                    .takeRetainedValue()
-                coordinator.nativeLocationFinished(outcome, runIdentifier: runIdentifier)
-            }
-        }
-    }
-
-    fileprivate func nativeLocationStarted() {
-        guard workerIsRunning, !cancellationRequested, let target = pendingSession?.target else { return }
-        mobileDataDiscoveryLoopTask?.cancel()
-        mobileDataDiscoveryLoopTask = nil
-        phase = .active(target)
-        if mobileDataGuidance == .turnOff {
-            mobileDataGuidance = .turnBackOn
-        }
-        backgroundTask?.updateTitle(
-            "Roam Control",
-            subtitle: "Location active at \(target.name)"
-        )
-    }
-
-    private func nativeLocationFinished(
-        _ outcome: NativeLocationOutcome,
-        runIdentifier: UUID
-    ) {
-        guard activeRunIdentifier == runIdentifier else { return }
-
-        activeRunIdentifier = nil
-        activeSession = nil
-        workerIsRunning = false
-
-        if let pendingFailureMessage {
-            self.pendingFailureMessage = nil
-            mobileDataGuidance = nil
-            clearPendingSession()
-            phase = .failed(pendingFailureMessage)
-            finishBackgroundTask(success: false)
-            return
-        }
-
-        if cancellationRequested {
-            cancellationRequested = false
-            clearPendingSession()
-            finishCancelledLocationSession()
-            return
-        }
-
-        switch outcome {
-        case .success:
-            mobileDataGuidance = nil
-            clearPendingSession()
-            phase = .idle
-            finishBackgroundTask(success: true)
-        case .failure(let message):
-            if isRecoverableTunnelConnectionFailure(message) {
-                resolvedService = nil
-                finishBackgroundTask(success: false)
-                if isMobileDataStartupMode {
-                    enterMobileDataGuidance()
-                } else if hasRequestedLocalDevVPNThisAttempt {
-                    phase = .discovering
-                    mobileDataGuidance = .connectionHelp
-                } else {
-                    openLocalDevVPNForPendingSession()
-                }
-                return
-            }
-
-            mobileDataGuidance = nil
-            clearPendingSession()
-            phase = .failed(message)
-            finishBackgroundTask(success: false)
-        }
-    }
-
-    private func locationTaskExpired() {
-        cancellationRequested = true
-        pendingFailureMessage = nil
-        mobileDataGuidance = nil
-        phase = .stopping
-
-        if let activeSession {
-            rc_location_session_cancel(activeSession)
-        } else {
-            clearPendingSession()
-            phase = .idle
-        }
-
-        finishBackgroundTask(success: true)
+    func appDidBecomeActive() {
+        guard mobileDataGuidance == .turnOff else { return }
+        startMobileDataDiscoveryLoop()
     }
 
     private func fail(_ message: String) {
-        localDevVPNReturnTimeout?.cancel()
-        localDevVPNReturnTimeout = nil
         mobileDataGuidance = nil
-        cleanupDiscovery()
+        startupTask?.cancel()
+        stopDiscovery()
 
-        if workerIsRunning, let activeSession {
+        if runner.isRunning {
+            // Let the worker unwind first; the message is reported when it ends.
             pendingFailureMessage = message
-            rc_location_session_cancel(activeSession)
-        } else {
-            clearPendingSession()
+            runner.cancel()
+            return
         }
 
+        runner.cancel()
+        clearPendingSession()
+        tunnel.stopUnlessKeptRunning()
         phase = .failed(message)
-        finishBackgroundTask(success: false)
     }
 
-    private func cleanupDiscovery() {
-        isDiscoveringServices = false
-        cleanupServiceProbe()
-        discoveryTimeout?.cancel()
-        discoveryTimeout = nil
-        mobileDataGuidanceDelay?.cancel()
-        mobileDataGuidanceDelay = nil
-        localDevVPNProbeTask?.cancel()
-        localDevVPNProbeTask = nil
-        browser.stop()
-
-        for service in discoveredServices {
-            service.stopMonitoring()
-            service.stop()
-            service.remove(from: .main, forMode: .common)
-            service.delegate = nil
-        }
-        discoveredServices = []
+    private func finishSession(with finalPhase: DeviceSessionPhase) {
+        mobileDataGuidance = nil
+        clearPendingSession()
+        tunnel.stopUnlessKeptRunning()
+        phase = finalPhase
     }
 
-    private func verifyServiceIsReachable(_ service: RemotePairingService) {
-        guard
-            phase == .discovering,
-            pendingSession != nil,
-            serviceProbeConnection == nil
-        else { return }
-        guard let port = NWEndpoint.Port(rawValue: service.port) else {
-            handleServiceProbeResult(false, service: service)
-            return
-        }
-
-        serviceProbeAttemptCount += 1
-        let connection = NWConnection(
-            host: NWEndpoint.Host(Self.localDevVPNPeerAddress),
-            port: port,
-            using: .tcp
-        )
-        serviceProbeConnection = connection
-        connection.stateUpdateHandler = { [weak self, weak connection] state in
-            guard let connection else { return }
-            switch state {
-            case .ready:
-                Task { @MainActor [weak self] in
-                    self?.finishServiceProbe(connection, service: service, reachable: true)
-                }
-            case .failed, .cancelled:
-                Task { @MainActor [weak self] in
-                    self?.finishServiceProbe(connection, service: service, reachable: false)
-                }
-            case .setup, .waiting, .preparing:
-                break
-            @unknown default:
-                break
-            }
-        }
-
-        serviceProbeTimeout = Task { @MainActor [weak self, weak connection] in
-            try? await Task.sleep(for: .milliseconds(900))
-            guard !Task.isCancelled, let self, let connection else { return }
-            self.finishServiceProbe(connection, service: service, reachable: false)
-        }
-        connection.start(queue: serviceProbeQueue)
-    }
-
-    private func finishServiceProbe(
-        _ connection: NWConnection,
-        service: RemotePairingService,
-        reachable: Bool
-    ) {
-        guard serviceProbeConnection === connection else { return }
-        serviceProbeConnection = nil
-        serviceProbeTimeout?.cancel()
-        serviceProbeTimeout = nil
-        connection.stateUpdateHandler = nil
-        connection.cancel()
-        handleServiceProbeResult(reachable, service: service)
-    }
-
-    private func handleServiceProbeResult(
-        _ reachable: Bool,
-        service: RemotePairingService
-    ) {
-        guard phase == .discovering, pendingSession != nil else { return }
-
-        if reachable {
-            serviceProbeAttemptCount = 0
-            resolvedService = service
-            mobileDataDiscoveryLoopTask?.cancel()
-            mobileDataDiscoveryLoopTask = nil
-            if mobileDataGuidance == .connectionHelp {
-                mobileDataGuidance = nil
-            }
-            cleanupDiscovery()
-            submitLocationTask()
-            return
-        }
-
-        if isMobileDataStartupMode {
-            serviceProbeAttemptCount = 0
-            return
-        }
-
-        if !hasRequestedLocalDevVPNThisAttempt {
-            serviceProbeAttemptCount = 0
-            openLocalDevVPNForPendingSession()
-            return
-        }
-
-        guard serviceProbeAttemptCount < 3 else {
-            serviceProbeAttemptCount = 0
-            mobileDataGuidance = .connectionHelp
-            return
-        }
-
-        serviceProbeRetryTask?.cancel()
-        serviceProbeRetryTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .milliseconds(650))
-            guard !Task.isCancelled, let self else { return }
-            self.serviceProbeRetryTask = nil
-            self.verifyServiceIsReachable(service)
-        }
-    }
-
-    private func cleanupServiceProbe() {
-        serviceProbeTimeout?.cancel()
-        serviceProbeTimeout = nil
-        serviceProbeRetryTask?.cancel()
-        serviceProbeRetryTask = nil
-        serviceProbeConnection?.stateUpdateHandler = nil
-        serviceProbeConnection?.cancel()
-        serviceProbeConnection = nil
-        serviceProbeAttemptCount = 0
-    }
-
-    private func clearPendingSession() {
-        automaticDiscoveryTask?.cancel()
-        automaticDiscoveryTask = nil
-        networkDecisionTask?.cancel()
-        networkDecisionTask = nil
-        mobileDataDiscoveryLoopTask?.cancel()
-        mobileDataDiscoveryLoopTask = nil
-        localDevVPNReturnTimeout?.cancel()
-        localDevVPNReturnTimeout = nil
-        cleanupDiscovery()
-        pendingSession = nil
-        resolvedService = nil
-        submittedTaskIdentifier = nil
-        hasRequestedLocalDevVPNThisAttempt = false
-        isMobileDataStartupMode = false
-    }
-
-    private func finishBackgroundTask(success: Bool) {
-        guard !backgroundTaskFinished else { return }
-        backgroundTaskFinished = true
-        backgroundProgressTask?.cancel()
-        backgroundProgressTask = nil
-        backgroundTask?.setTaskCompleted(success: success)
-        backgroundTask = nil
-        submittedTaskIdentifier = nil
-    }
-
-    private func finishCancelledLocationSession() {
-        let elapsed = restorationDisplayStartDate.map { Date.now.timeIntervalSince($0) } ?? .infinity
-        restorationDisplayStartDate = nil
+    private func completeRestoration() {
+        let elapsed = restorationDisplayStart.map { Date.now.timeIntervalSince($0) } ?? .infinity
+        restorationDisplayStart = nil
         let remaining = max(0, Self.minimumRestorationDisplayDuration - elapsed)
 
         guard remaining > 0 else {
             phase = .idle
-            finishBackgroundTask(success: true)
             return
         }
 
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(remaining))
-            guard let self, !self.workerIsRunning, self.phase == .stopping else { return }
+            guard let self, !self.runner.isRunning, self.phase == .stopping else { return }
             self.phase = .idle
-            self.finishBackgroundTask(success: true)
         }
     }
 
-    private func isRecoverableTunnelConnectionFailure(_ message: String) -> Bool {
-        message.localizedCaseInsensitiveContains("through LocalDevVPN")
-            || message.localizedCaseInsensitiveContains("make the iPhone connection available")
-            || message.localizedCaseInsensitiveContains("open the secure device tunnel")
+    private func clearPendingSession() {
+        startupTask?.cancel()
+        startupTask = nil
+        mobileDataDiscoveryLoop?.cancel()
+        mobileDataDiscoveryLoop = nil
+        stopDiscovery()
+        pendingSession = nil
+        hasRestartedTunnelThisAttempt = false
+        isMobileDataStartupMode = false
     }
 
-    private func routeStartupForCurrentNetwork() {
-        networkDecisionTask?.cancel()
-        networkDecisionTask = nil
+    // MARK: - Mobile data guidance
+
+    func dismissMobileDataGuidance() {
         mobileDataGuidance = nil
+    }
 
-        if wifiPathStatusIsKnown {
-            if isWiFiPathSatisfied {
-                beginDiscovery(openLocalDevVPNIfUnavailable: true)
-            } else {
-                isMobileDataStartupMode = true
-                openLocalDevVPNForPendingSession()
-            }
-            return
+    func useMobileDataGuidance() {
+        guard mobileDataGuidance == .connectionHelp, pendingSession != nil else { return }
+        isMobileDataStartupMode = true
+        enterMobileDataGuidance()
+    }
+
+    func confirmMobileDataIsOff() {
+        guard mobileDataGuidance == .turnOff, pendingSession != nil else { return }
+        mobileDataDiscoveryLoop?.cancel()
+        mobileDataDiscoveryLoop = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(750))
+            guard !Task.isCancelled, let self else { return }
+            self.startMobileDataDiscoveryLoop()
         }
+    }
 
-        networkDecisionTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .milliseconds(600))
-            guard
-                !Task.isCancelled,
-                let self,
-                self.pendingSession != nil,
-                !self.workerIsRunning
-            else { return }
+    func retryConnection() {
+        guard mobileDataGuidance == .connectionHelp, pendingSession != nil else { return }
+        mobileDataGuidance = nil
+        beginDiscovery(showConnectionHelpIfUnavailable: true)
+    }
 
-            self.networkDecisionTask = nil
-            if self.wifiPathStatusIsKnown, !self.isWiFiPathSatisfied {
-                self.isMobileDataStartupMode = true
-                self.openLocalDevVPNForPendingSession()
-            } else {
-                self.beginDiscovery(openLocalDevVPNIfUnavailable: true)
-            }
-        }
+    func restartTunnel() {
+        guard pendingSession != nil else { return }
+        mobileDataGuidance = nil
+        restartTunnelAndRetryDiscovery()
     }
 
     private func enterMobileDataGuidance() {
-        guard pendingSession != nil, !workerIsRunning else { return }
-        cleanupDiscovery()
+        guard pendingSession != nil, !runner.isRunning else { return }
+        stopDiscovery()
         phase = .discovering
         mobileDataGuidance = .turnOff
         startMobileDataDiscoveryLoop()
     }
 
+    /// The announcement can take a few seconds to appear on the tunnel.
     private func startMobileDataDiscoveryLoop() {
         guard
             isMobileDataStartupMode,
             mobileDataGuidance == .turnOff,
             pendingSession != nil,
-            !workerIsRunning
+            !runner.isRunning
         else { return }
 
-        mobileDataDiscoveryLoopTask?.cancel()
-        mobileDataDiscoveryLoopTask = Task { @MainActor [weak self] in
+        mobileDataDiscoveryLoop?.cancel()
+        mobileDataDiscoveryLoop = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 guard
                     let self,
                     self.isMobileDataStartupMode,
                     self.mobileDataGuidance == .turnOff,
                     self.pendingSession != nil,
-                    !self.workerIsRunning
+                    !self.runner.isRunning
                 else { return }
 
-                self.resolvedService = nil
                 self.beginDiscovery(reportTimeout: false)
                 try? await Task.sleep(for: .seconds(4))
             }
         }
     }
+}
 
-    private func openLocalDevVPNForPendingSession() {
-#if !targetEnvironment(simulator)
-        guard pendingSession != nil, !workerIsRunning else { return }
-        cleanupDiscovery()
-        mobileDataGuidance = nil
-        hasRequestedLocalDevVPNThisAttempt = true
-        phase = .openingLocalDevVPN
+@MainActor
+private final class WiFiAvailability {
+    private static let firstReportTimeout: Duration = .milliseconds(600)
+    private static let pollInterval: Duration = .milliseconds(50)
 
-        UIApplication.shared.open(Self.enableURL) { [weak self] opened in
-            guard !opened else { return }
-            Task { @MainActor in
-                self?.fail("Install LocalDevVPN before starting a location session.")
+    private let monitor = NWPathMonitor(requiredInterfaceType: .wifi)
+    private var isSatisfied = false
+    private var hasReported = false
+
+    init() {
+        monitor.pathUpdateHandler = { [weak self] path in
+            let isSatisfied = path.status == .satisfied
+            Task { @MainActor [weak self] in
+                self?.isSatisfied = isSatisfied
+                self?.hasReported = true
             }
         }
-#endif
+        monitor.start(queue: DispatchQueue(
+            label: "com.clover.roamcontrol.wifi-path",
+            qos: .utility
+        ))
     }
 
-}
-
-extension LocalDeviceSessionCoordinator: NetServiceBrowserDelegate, NetServiceDelegate {
-    nonisolated func netServiceBrowser(
-        _ browser: NetServiceBrowser,
-        didFind service: NetService,
-        moreComing: Bool
-    ) {
-        MainActor.assumeIsolated {
-            resolve(service)
+    /// Reading before the monitor's first report would mistake a cold start for
+    /// an iPhone with no Wi-Fi.
+    func isAvailable() async -> Bool {
+        let deadline = ContinuousClock.now.advanced(by: Self.firstReportTimeout)
+        while !hasReported, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: Self.pollInterval)
         }
-    }
-
-    nonisolated func netServiceBrowser(
-        _ browser: NetServiceBrowser,
-        didNotSearch errorDict: [String: NSNumber]
-    ) {
-        MainActor.assumeIsolated {
-            fail("Local Network access is required to find this iPhone.")
-        }
-    }
-
-    nonisolated func netServiceDidResolveAddress(_ sender: NetService) {
-        MainActor.assumeIsolated {
-            useResolvedService(sender)
-        }
-    }
-
-    nonisolated func netService(_ sender: NetService, didUpdateTXTRecord data: Data) {
-        MainActor.assumeIsolated {
-            useResolvedService(sender)
-        }
-    }
-}
-
-private enum NativeLocationOutcome: Sendable {
-    case success
-    case failure(String)
-
-    init(result: RCLocationResult, returnCode: Int32) {
-        guard returnCode != 0 else {
-            self = .success
-            return
-        }
-
-        let message: String
-        if let errorMessage = result.error_message {
-            message = String(cString: errorMessage)
-        } else {
-            message = ""
-        }
-        self = .failure(message.isEmpty ? "The iPhone could not start the location session." : message)
-    }
-}
-
-private let locationStartedCallback: RCLocationStartedCallback = { context in
-    guard let context else { return }
-    let contextBits = UInt(bitPattern: context)
-
-    DispatchQueue.main.async {
-        guard let context = UnsafeMutableRawPointer(bitPattern: contextBits) else { return }
-        let coordinator = Unmanaged<LocalDeviceSessionCoordinator>
-            .fromOpaque(context)
-            .takeUnretainedValue()
-        coordinator.nativeLocationStarted()
+        return isSatisfied
     }
 }

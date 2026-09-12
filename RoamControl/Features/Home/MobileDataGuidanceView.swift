@@ -4,7 +4,7 @@ struct MobileDataGuidanceView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     let guidance: MobileDataGuidance
-    let onOpenLocalDevVPN: () -> Void
+    let onRestartTunnel: () -> Void
     let onRetry: () -> Void
     let onUseMobileData: () -> Void
     let onMobileDataOff: () -> Void
@@ -72,7 +72,7 @@ struct MobileDataGuidanceView: View {
 
             if guidance == .connectionHelp {
                 Label(
-                    "Roam Control has not found LocalDevVPN's device connection yet.",
+                    "Roam Control has not found this iPhone on the local tunnel yet.",
                     systemImage: "lock.shield"
                 )
                 .font(.caption)
@@ -85,7 +85,7 @@ struct MobileDataGuidanceView: View {
                     .controlSize(.large)
                     .frame(maxWidth: .infinity)
 
-                Button("Open LocalDevVPN", action: onOpenLocalDevVPN)
+                Button("Restart Tunnel", action: onRestartTunnel)
                     .buttonStyle(.bordered)
 
                 Button("I'm Using Mobile Data", action: onUseMobileData)
@@ -117,7 +117,7 @@ struct MobileDataGuidanceView: View {
                     .controlSize(.large)
                     .frame(maxWidth: .infinity)
 
-                Button("Open LocalDevVPN", action: onOpenLocalDevVPN)
+                Button("Restart Tunnel", action: onRestartTunnel)
                     .buttonStyle(.bordered)
 
                 Button("Cancel", role: .cancel, action: onCancel)
@@ -149,9 +149,9 @@ struct MobileDataGuidanceView: View {
     private var message: String {
         switch guidance {
         case .connectionHelp:
-            "If you're on Wi‑Fi, make sure LocalDevVPN says Connected, then try again. Choose mobile data only when you're actually using 4G or 5G."
+            "If you're on Wi‑Fi, try again. Choose mobile data only when you're actually using 4G or 5G."
         case .turnOff:
-            "Make sure LocalDevVPN is connected, switch mobile data off briefly, then return to Roam Control."
+            "Switch mobile data off briefly, then return to Roam Control. The tunnel stays up on its own."
         case .turnBackOn:
             "The secure location session is ready. You can restore mobile data now; spoofing will continue over 5G."
         }

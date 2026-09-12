@@ -27,9 +27,6 @@ struct RoamControlApp: App {
                     reduceMotion ? nil : .easeInOut(duration: 0.25),
                     value: appModel.hasCompletedOnboarding
                 )
-                .onOpenURL { url in
-                    appModel.handleOpenURL(url)
-                }
                 .onChange(of: scenePhase) { _, phase in
                     guard phase == .active else { return }
                     appModel.appBecameActive()
