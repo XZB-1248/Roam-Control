@@ -34,6 +34,10 @@ final class LocationSessionRunner {
     private var progressTask: Task<Void, Never>?
     private var hasFinishedBackgroundTask = true
     private var pending: (pairingRecord: Data, service: RemotePairingService, target: LocationTarget)?
+    private var teardownWatchdog: Task<Void, Never>?
+
+    /// Held open after iOS asks the task to stop, so teardown can finish.
+    private static let teardownGracePeriod: Duration = .seconds(6)
 
     private static var taskIdentifierPrefix: String {
         BackgroundTaskIdentifier.prefix(for: "location")
@@ -227,14 +231,27 @@ final class LocationSessionRunner {
         isRunning = false
         pending = nil
 
-        finishBackgroundTask(success: outcome == .success)
         onEvent?(.finished(outcome))
+        finishBackgroundTask(success: outcome == .success)
     }
 
     private func handleExpiration() {
-        cancel()
-        finishBackgroundTask(success: true)
         onEvent?(.expired)
+
+        guard cancel() else {
+            // Nothing was running, so no `.finished` is coming.
+            finishBackgroundTask(success: true)
+            return
+        }
+
+        // Completing the task here instead would let iOS suspend the app
+        // mid-teardown, leaving the location simulated and the tunnel up until
+        // the app is next opened.
+        teardownWatchdog = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: Self.teardownGracePeriod)
+            guard !Task.isCancelled, let self else { return }
+            self.finishBackgroundTask(success: true)
+        }
     }
 
     // MARK: - Background task
@@ -262,6 +279,9 @@ final class LocationSessionRunner {
     private func finishBackgroundTask(success: Bool) {
         guard !hasFinishedBackgroundTask else { return }
         hasFinishedBackgroundTask = true
+
+        teardownWatchdog?.cancel()
+        teardownWatchdog = nil
 
         progressTask?.cancel()
         progressTask = nil
