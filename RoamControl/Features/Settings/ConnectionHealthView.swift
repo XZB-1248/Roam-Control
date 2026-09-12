@@ -35,13 +35,17 @@ struct ConnectionHealthView: View {
 
             Section("Current Location") {
                 LabeledContent("Place", value: activeTarget?.name ?? "None")
-                LabeledContent("Coordinates", value: coordinatesValue)
+                coordinateRow("Coordinates", value: coordinatesValue)
 
                 if let sentCoordinatesValue {
-                    LabeledContent("Sent to iPhone", value: sentCoordinatesValue)
+                    coordinateRow("Sent to iPhone", value: sentCoordinatesValue)
                 }
 
-                LabeledContent("Reported by iOS", value: reportedCoordinatesValue)
+                coordinateRow(
+                    "Reported by iOS",
+                    value: reportedCoordinate,
+                    placeholder: reportedPlaceholder
+                )
 
                 if let activeTarget, !activeTarget.subtitle.isEmpty {
                     LabeledContent("Area", value: activeTarget.subtitle)
@@ -134,8 +138,22 @@ struct ConnectionHealthView: View {
         return nil
     }
 
-    private var coordinatesValue: String {
-        guard let activeTarget else { return "None" }
+    @ViewBuilder
+    private func coordinateRow(
+        _ title: String,
+        value: String?,
+        placeholder: String = "None"
+    ) -> some View {
+        if let value {
+            LabeledContent(title, value: value)
+                .textSelection(.enabled)
+        } else {
+            LabeledContent(title, value: placeholder)
+        }
+    }
+
+    private var coordinatesValue: String? {
+        guard let activeTarget else { return nil }
         return String(format: "%.5f, %.5f", activeTarget.latitude, activeTarget.longitude)
     }
 
@@ -147,10 +165,15 @@ struct ConnectionHealthView: View {
         return String(format: "%.5f, %.5f", sent.latitude, sent.longitude)
     }
 
-    private var reportedCoordinatesValue: String {
-        guard reportedLocation.isAuthorized else { return "Needs Location access" }
-        guard let coordinate = reportedLocation.coordinate else { return "Waiting" }
+    private var reportedCoordinate: String? {
+        guard reportedLocation.isAuthorized, let coordinate = reportedLocation.coordinate else {
+            return nil
+        }
         return String(format: "%.5f, %.5f", coordinate.latitude, coordinate.longitude)
+    }
+
+    private var reportedPlaceholder: String {
+        reportedLocation.isAuthorized ? "Waiting" : "Needs Location access"
     }
 
     private var pairingValue: String {
