@@ -1,4 +1,5 @@
 import BackgroundTasks
+import CoreLocation
 import Foundation
 import RoamPairingFFI
 
@@ -99,7 +100,14 @@ final class LocationSessionRunner {
     @discardableResult
     func updateLocation(_ target: LocationTarget) -> Bool {
         guard isRunning, let session else { return false }
-        return rc_location_session_update(session, target.latitude, target.longitude) == 0
+        let coordinate = Self.coordinateToSend(for: target)
+        return rc_location_session_update(session, coordinate.latitude, coordinate.longitude) == 0
+    }
+
+    /// Everything upstream works in the datum MapKit reports, the simulation in
+    /// WGS-84. This is the only place the two meet.
+    private static func coordinateToSend(for target: LocationTarget) -> CLLocationCoordinate2D {
+        MapCoordinateDatum.wgs84(from: target.coordinate)
     }
 
     func describe(subtitle: String) {
@@ -155,6 +163,7 @@ final class LocationSessionRunner {
         let sessionBits = UInt(bitPattern: session)
         let contextBits = UInt(bitPattern: Unmanaged.passRetained(self).toOpaque())
         let (pairingRecord, service, target) = pending
+        let coordinate = Self.coordinateToSend(for: target)
 
         DispatchQueue.global(qos: .userInitiated).async {
             guard
@@ -179,8 +188,8 @@ final class LocationSessionRunner {
                                 service.port,
                                 serviceIdentifier,
                                 authTag,
-                                target.latitude,
-                                target.longitude,
+                                coordinate.latitude,
+                                coordinate.longitude,
                                 locationStartedCallback,
                                 context,
                                 &result

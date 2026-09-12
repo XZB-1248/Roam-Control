@@ -4,6 +4,7 @@ import UIKit
 struct ConnectionHealthView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @State private var reportedLocation = ReportedLocationObserver()
     @State private var isShowingDeviceSetup = false
     @State private var didCopyDiagnostics = false
 
@@ -35,6 +36,12 @@ struct ConnectionHealthView: View {
             Section("Current Location") {
                 LabeledContent("Place", value: activeTarget?.name ?? "None")
                 LabeledContent("Coordinates", value: coordinatesValue)
+
+                if let sentCoordinatesValue {
+                    LabeledContent("Sent to iPhone", value: sentCoordinatesValue)
+                }
+
+                LabeledContent("Reported by iOS", value: reportedCoordinatesValue)
 
                 if let activeTarget, !activeTarget.subtitle.isEmpty {
                     LabeledContent("Area", value: activeTarget.subtitle)
@@ -103,7 +110,11 @@ struct ConnectionHealthView: View {
         }
         .navigationTitle("Connection Health")
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            reportedLocation.start()
+        }
         .onDisappear {
+            reportedLocation.stop()
             diagnostics.cancel()
         }
         .sheet(isPresented: $isShowingDeviceSetup) {
@@ -126,6 +137,20 @@ struct ConnectionHealthView: View {
     private var coordinatesValue: String {
         guard let activeTarget else { return "None" }
         return String(format: "%.5f, %.5f", activeTarget.latitude, activeTarget.longitude)
+    }
+
+    private var sentCoordinatesValue: String? {
+        guard let activeTarget, MapCoordinateDatum.isOffset(activeTarget.coordinate) else {
+            return nil
+        }
+        let sent = MapCoordinateDatum.wgs84(from: activeTarget.coordinate)
+        return String(format: "%.5f, %.5f", sent.latitude, sent.longitude)
+    }
+
+    private var reportedCoordinatesValue: String {
+        guard reportedLocation.isAuthorized else { return "Needs Location access" }
+        guard let coordinate = reportedLocation.coordinate else { return "Waiting" }
+        return String(format: "%.5f, %.5f", coordinate.latitude, coordinate.longitude)
     }
 
     private var pairingValue: String {
@@ -299,6 +324,7 @@ struct ConnectionHealthView: View {
         App: \(appVersion) (\(build))
         iOS: \(UIDevice.current.systemVersion)
         Pairing: \(pairingValue)
+        Datum conversion: \(sentCoordinatesValue == nil ? "Not applied" : "Applied")
         Local tunnel: \(tunnelValue)
         Session: \(sessionValue)
         Last connection check: \(checked)
