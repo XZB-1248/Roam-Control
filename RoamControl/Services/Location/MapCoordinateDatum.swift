@@ -1,6 +1,25 @@
 import CoreLocation
 import Foundation
 
+/// Whether the datum offset is applied to a coordinate. The boundary behind
+/// `automatic` is only accurate to about a kilometre, so the manual settings are
+/// the way out when it gets a location wrong.
+enum DatumOverride: String, CaseIterable, Identifiable {
+    case automatic
+    case always
+    case never
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .automatic: "Automatic"
+        case .always: "Always Convert"
+        case .never: "Never Convert"
+        }
+    }
+}
+
 /// Translates between the datum MapKit reports and the WGS-84 the device's
 /// location simulation expects.
 ///
@@ -32,15 +51,23 @@ enum MapCoordinateDatum {
         return offsetting(wgs84)
     }
 
-    /// The conventional bounding box for mainland China. It over-reaches: Hong
-    /// Kong, Macau, Taiwan, Seoul, Bangkok and Hanoi all sit inside it but are
-    /// surveyed in WGS-84.
     static func isOffset(_ coordinate: CLLocationCoordinate2D) -> Bool {
-        coordinate.longitude >= 72.004
-            && coordinate.longitude <= 137.8347
-            && coordinate.latitude >= 0.8293
-            && coordinate.latitude <= 55.8271
+        switch override {
+        case .automatic: DatumRegion.contains(coordinate)
+        case .always: true
+        case .never: false
+        }
     }
+
+    static var override: DatumOverride {
+        get {
+            let stored = UserDefaults.standard.string(forKey: overrideKey) ?? ""
+            return DatumOverride(rawValue: stored) ?? .automatic
+        }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: overrideKey) }
+    }
+
+    private static let overrideKey = "coordinateDatumOverride"
 
     // MARK: - The offset
 

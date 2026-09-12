@@ -16,6 +16,7 @@ struct SettingsView: View {
     @State private var isConfirmingReset = false
     @State private var resetError: String?
     @State private var releaseUpdateStatus: ReleaseUpdateStatus = .idle
+    @State private var datumOverride = MapCoordinateDatum.override
 
     var body: some View {
         NavigationStack {
@@ -56,6 +57,18 @@ struct SettingsView: View {
                         }
                     }
                     .foregroundStyle(.primary)
+                }
+
+                Section {
+                    Picker("Offset", selection: datumOverrideBinding) {
+                        ForEach(DatumOverride.allCases) { option in
+                            Text(option.title).tag(option)
+                        }
+                    }
+                } header: {
+                    Text("Coordinate Datum")
+                } footer: {
+                    Text("Mainland China surveys map data with an offset that has to be undone before a location is sent to this iPhone. Automatic decides from the coordinate, using a boundary accurate to about a kilometre. Override it if a location near a border comes out wrong.")
                 }
 
                 Section {
@@ -272,6 +285,16 @@ struct SettingsView: View {
         Binding(
             get: { appModel.mapDisplayStyle },
             set: appModel.setMapDisplayStyle
+        )
+    }
+
+    private var datumOverrideBinding: Binding<DatumOverride> {
+        Binding(
+            get: { datumOverride },
+            set: {
+                MapCoordinateDatum.override = $0
+                datumOverride = $0
+            }
         )
     }
 

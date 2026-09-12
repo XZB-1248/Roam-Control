@@ -1,6 +1,6 @@
 # Third-party notices
 
-Roam Control includes a native bridge linked against open-source Rust software.
+Roam Control includes a native bridge linked against open-source Rust software, and a bundled boundary dataset.
 
 ## idevice
 
@@ -9,6 +9,13 @@ Roam Control includes a native bridge linked against open-source Rust software.
 - Licence: MIT
 - Copyright: Jackson Coxson
 - Licence text: `ThirdParty/idevice-LICENSE.txt`
+
+## Natural Earth
+
+- Project: [Natural Earth](https://www.naturalearthdata.com/)
+- Dataset: `ne_10m_admin_0_countries`, 1:10m cultural vectors (China, Hong Kong, Macau, Taiwan)
+- Licence: public domain, no permission or attribution required
+- Used in: `RoamControl/Resources/ChinaDatumRegion.bin`, the boundary that decides where the GCJ-02 offset applies
 
 ## Rust dependencies
 
