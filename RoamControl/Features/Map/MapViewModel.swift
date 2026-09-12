@@ -32,6 +32,11 @@ final class MapViewModel: NSObject, MKLocalSearchCompleterDelegate {
     @ObservationIgnored
     private var requiresFreshRealLocation = false
 
+    /// Applied to every camera change, so motion is decided in one place instead
+    /// of at each call site. The view keeps it in step with Reduce Motion.
+    @ObservationIgnored
+    var cameraAnimation: Animation? = .easeInOut(duration: 0.3)
+
     override init() {
         cameraPosition = .automatic
         super.init()
@@ -124,12 +129,16 @@ final class MapViewModel: NSObject, MKLocalSearchCompleterDelegate {
     }
 
     func center(on target: LocationTarget) {
-        cameraPosition = .region(
+        move(to: .region(
             MKCoordinateRegion(
                 center: target.coordinate,
                 span: MKCoordinateSpan(latitudeDelta: 0.025, longitudeDelta: 0.025)
             )
-        )
+        ))
+    }
+
+    func move(to position: MapCameraPosition) {
+        withAnimation(cameraAnimation) { cameraPosition = position }
     }
 
     func show(_ route: MKRoute) {
@@ -138,9 +147,9 @@ final class MapViewModel: NSObject, MKLocalSearchCompleterDelegate {
 
         let horizontalPadding = max(routeRect.size.width * 0.24, 1_200)
         let verticalPadding = max(routeRect.size.height * 0.30, 1_200)
-        cameraPosition = .rect(
+        move(to: .rect(
             routeRect.insetBy(dx: -horizontalPadding, dy: -verticalPadding)
-        )
+        ))
     }
 
     func prepareCurrentLocation(recenter: Bool = false) {
@@ -222,12 +231,12 @@ final class MapViewModel: NSObject, MKLocalSearchCompleterDelegate {
             )
 
             selectedLocation = target
-            cameraPosition = .region(
+            move(to: .region(
                 MKCoordinateRegion(
                     center: coordinate,
                     span: MKCoordinateSpan(latitudeDelta: 0.025, longitudeDelta: 0.025)
                 )
-            )
+            ))
             resetSearchField()
         } catch is CancellationError {
             return
@@ -252,12 +261,12 @@ final class MapViewModel: NSObject, MKLocalSearchCompleterDelegate {
         selectedLocation = pendingTarget
 
         if recenter {
-            cameraPosition = .region(
+            move(to: .region(
                 MKCoordinateRegion(
                     center: coordinate,
                     span: MKCoordinateSpan(latitudeDelta: 0.025, longitudeDelta: 0.025)
                 )
-            )
+            ))
         }
 
         guard let request = MKReverseGeocodingRequest(
@@ -449,12 +458,12 @@ final class MapViewModel: NSObject, MKLocalSearchCompleterDelegate {
     }
 
     private func center(on location: CLLocation) {
-        cameraPosition = .region(
+        move(to: .region(
             MKCoordinateRegion(
                 center: MapCoordinateDatum.mapCoordinate(from: location.coordinate),
                 span: MKCoordinateSpan(latitudeDelta: 0.025, longitudeDelta: 0.025)
             )
-        )
+        ))
     }
 
     private func cachedRealLocation() -> CLLocation? {

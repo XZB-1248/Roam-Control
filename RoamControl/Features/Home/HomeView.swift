@@ -218,6 +218,7 @@ struct HomeView: View {
                     }
                     }
 
+                    Group {
                     if let route = walkingRoutePlanner.route,
                    let destination = walkingRoutePlanner.destination {
                     WalkingRoutePreviewCard(
@@ -232,7 +233,7 @@ struct HomeView: View {
                         onWalkBack: {
                             guard let returnTarget = walkingSimulation.prepareReturnTrip() else { return }
                             walkingRoutePlanner.retargetExistingRoute(to: returnTarget)
-                            withAnimation(cardAnimation) { mapModel.show(returnTarget) }
+                            mapModel.show(returnTarget)
                         },
                         onChooseNewLocation: {
                             walkingSimulation.reset()
@@ -246,10 +247,9 @@ struct HomeView: View {
                         onDone: {
                             walkingSimulation.reset()
                             walkingRoutePlanner.clear()
-                            withAnimation(cardAnimation) { mapModel.show(destination) }
+                            mapModel.show(destination)
                         }
                     )
-                    .transition(.blurReplace)
                     } else {
                     LocationSelectionCard(
                         location: mapModel.selectedLocation,
@@ -272,7 +272,7 @@ struct HomeView: View {
                             Task {
                                 if let route = await walkingRoutePlanner.preview(to: target) {
                                     walkingSimulation.prepare(route: route, destination: target)
-                                    withAnimation(cardAnimation) { mapModel.show(route) }
+                                    mapModel.show(route)
                                 }
                             }
                         },
@@ -286,8 +286,10 @@ struct HomeView: View {
                             appModel.stopLocationSession()
                         }
                     )
-                    .transition(.blurReplace)
                     }
+                    }
+                    .id(selectionCardState)
+                    .transition(.blurReplace)
                 } else {
                     Spacer()
                 }
@@ -295,8 +297,7 @@ struct HomeView: View {
             .padding(.horizontal, 16)
             .padding(.top, 8)
             .padding(.bottom, 8)
-            .animation(cardSwapAnimation, value: walkingRoutePlanner.route != nil)
-            .animation(cardSwapAnimation, value: mapModel.selectedLocation?.id)
+            .animation(cardSwapAnimation, value: selectionCardState)
 
             if let message = mapModel.errorMessage {
                 VStack {
@@ -392,6 +393,9 @@ struct HomeView: View {
             if isShowingDeviceSetup {
                 appModel.deviceSetupWasPresented()
             }
+        }
+        .onChange(of: reduceMotion, initial: true) { _, _ in
+            mapModel.cameraAnimation = reduceMotion ? nil : .easeInOut(duration: 0.3)
         }
         .onChange(of: appModel.deviceSession.phase) { oldPhase, newPhase in
             walkingSimulation.handleDeviceSessionPhase(
@@ -522,12 +526,27 @@ struct HomeView: View {
         return remainder >= 0 ? remainder : remainder + 360
     }
 
-    private var cardAnimation: Animation? {
-        reduceMotion ? nil : .easeInOut(duration: 0.3)
+    /// Which of the bottom card's states is showing. Everything about moving
+    /// between them — the animation, the transition, the identity that makes
+    /// SwiftUI treat a change as a replacement — hangs off this one value.
+    private enum SelectionCardState: Hashable {
+        case walkingRoute
+        case place(String)
+        case empty
     }
 
-    /// Nil under Reduce Motion, which also stops the cards' transition from
-    /// playing — a transition only runs inside an animation.
+    private var selectionCardState: SelectionCardState {
+        if walkingRoutePlanner.route != nil, walkingRoutePlanner.destination != nil {
+            return .walkingRoute
+        }
+        if let id = mapModel.selectedLocation?.id {
+            return .place(id)
+        }
+        return .empty
+    }
+
+    /// Nil under Reduce Motion, which also stops the transition from playing —
+    /// a transition only runs inside an animation.
     private var cardSwapAnimation: Animation? {
         reduceMotion ? nil : .smooth(duration: 0.35)
     }
@@ -547,23 +566,11 @@ struct HomeView: View {
             pitch: camera.pitch
         )
 
-        if reduceMotion {
-            mapModel.cameraPosition = .camera(northUpCamera)
-        } else {
-            withAnimation(.easeInOut(duration: 0.3)) {
-                mapModel.cameraPosition = .camera(northUpCamera)
-            }
-        }
+        mapModel.move(to: .camera(northUpCamera))
     }
 
     private func showCurrentLocationNorthUp() {
-        if reduceMotion {
-            mapModel.showCurrentLocation()
-        } else {
-            withAnimation(.easeInOut(duration: 0.3)) {
-                mapModel.showCurrentLocation()
-            }
-        }
+        mapModel.showCurrentLocation()
     }
 
     private func resumeInterruptedSession(_ recovery: SessionRecoveryRecord) {
