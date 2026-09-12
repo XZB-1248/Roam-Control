@@ -13,7 +13,6 @@ struct HomeView: View {
     @State private var isShowingSavedPlaces = false
     @State private var shouldRefreshRealLocationWhenActive = false
     @State private var shouldClearLocationAfterRestoration = false
-    @State private var isLocatingRealLocationAfterRestoration = false
     @State private var visibleMapCamera: MapCamera?
     @State private var isPreparingRecoveredWalk = false
     @State private var recoveredWalkError: String?
@@ -219,9 +218,7 @@ struct HomeView: View {
                     }
                     }
 
-                    if isLocatingRealLocationAfterRestoration {
-                    RestoringRealLocationCard()
-                    } else if let route = walkingRoutePlanner.route,
+                    if let route = walkingRoutePlanner.route,
                    let destination = walkingRoutePlanner.destination {
                     WalkingRoutePreviewCard(
                         route: route,
@@ -281,7 +278,6 @@ struct HomeView: View {
                         onStart: {
                             guard let target = mapModel.selectedLocation else { return }
                             shouldRefreshRealLocationWhenActive = false
-                            mapModel.show(target)
                             Task { await appModel.startLocationSession(at: target) }
                         },
                         onStop: {
@@ -410,7 +406,6 @@ struct HomeView: View {
                     walkingRoutePlanner.clear()
                     mapModel.clearSelectedLocation()
                     shouldRefreshRealLocationWhenActive = false
-                    isLocatingRealLocationAfterRestoration = true
                     mapModel.refreshRealLocationAfterRestoration()
                 }
             case .failed:
@@ -418,14 +413,13 @@ struct HomeView: View {
             }
 
             guard oldPhase == .stopping, newPhase == .idle else { return }
-            guard !isLocatingRealLocationAfterRestoration else { return }
             shouldRefreshRealLocationWhenActive = true
             Task { @MainActor in
                 try? await Task.sleep(for: .seconds(3))
                 guard shouldRefreshRealLocationWhenActive, scenePhase == .active else { return }
                 shouldRefreshRealLocationWhenActive = false
                 guard case .idle = appModel.deviceSession.phase else { return }
-                mapModel.showRealLocationAfterSession()
+                mapModel.refreshRealLocationAfterSession()
             }
         }
         .onChange(of: mapModel.selectedLocation?.id) { _, selectedLocationID in
@@ -436,10 +430,6 @@ struct HomeView: View {
                 walkingRoutePlanner.clear()
             }
         }
-        .onChange(of: mapModel.isFindingRealLocation) { _, isFindingRealLocation in
-            guard isLocatingRealLocationAfterRestoration, !isFindingRealLocation else { return }
-            isLocatingRealLocationAfterRestoration = false
-        }
         .onChange(of: scenePhase) { _, newPhase in
             guard newPhase == .active else { return }
             appModel.deviceSession.appDidBecomeActive()
@@ -447,7 +437,7 @@ struct HomeView: View {
             guard shouldRefreshRealLocationWhenActive else { return }
             shouldRefreshRealLocationWhenActive = false
             guard case .idle = appModel.deviceSession.phase else { return }
-            mapModel.showRealLocationAfterSession()
+            mapModel.refreshRealLocationAfterSession()
         }
         .sheet(isPresented: $isShowingDeviceSetup) {
             PairingSetupView()
@@ -604,7 +594,7 @@ struct HomeView: View {
         walkingSimulation.reset()
         walkingRoutePlanner.clear()
         appModel.dismissInterruptedSessionRecovery()
-        mapModel.showRealLocationAfterSession()
+        mapModel.refreshRealLocationAfterSession()
     }
 }
 

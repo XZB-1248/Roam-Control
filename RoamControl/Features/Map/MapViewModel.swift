@@ -151,17 +151,19 @@ final class MapViewModel: NSObject, MKLocalSearchCompleterDelegate {
         )
     }
 
-    func showRealLocationAfterSession() {
+    func refreshRealLocationAfterSession() {
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(900))
             self?.refreshRealLocationAfterRestoration()
         }
     }
 
+    /// Keeps the cached position current for the next recentre. The map itself
+    /// stays where the user left it.
     func refreshRealLocationAfterRestoration() {
         requestCurrentLocation(
-            recenter: true,
-            reportErrors: true,
+            recenter: false,
+            reportErrors: false,
             requireFreshLocation: true
         )
     }
