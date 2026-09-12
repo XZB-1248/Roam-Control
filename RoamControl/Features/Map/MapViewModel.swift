@@ -37,6 +37,24 @@ final class MapViewModel: NSObject, MKLocalSearchCompleterDelegate {
     @ObservationIgnored
     var cameraAnimation: Animation? = .easeInOut(duration: 0.3)
 
+    /// The map view's size, and how much of its top and bottom are hidden
+    /// behind the controls floating over it. The view reports geometry; fitting
+    /// works out what to do with it.
+    @ObservationIgnored
+    var viewSize: CGSize = .zero
+    @ObservationIgnored
+    var obscuredInsets = ObscuredInsets()
+
+    struct ObscuredInsets: Equatable {
+        var top: CGFloat = 0
+        var bottom: CGFloat = 0
+    }
+
+    @ObservationIgnored
+    private var pendingFit: MKMapRect?
+    @ObservationIgnored
+    private var pendingFitExpiry: Task<Void, Never>?
+
     override init() {
         cameraPosition = .automatic
         super.init()
@@ -145,11 +163,60 @@ final class MapViewModel: NSObject, MKLocalSearchCompleterDelegate {
         let routeRect = route.polyline.boundingMapRect
         guard !routeRect.isNull, !routeRect.isEmpty else { return }
 
+        // The card covering the map is still the shorter one at this point; it
+        // grows as the route appears. Hold the rect briefly so the fit can be
+        // redone once that height is known, and no longer, or a card resizing
+        // mid-walk would pull the camera back.
+        pendingFit = routeRect
+        pendingFitExpiry?.cancel()
+        pendingFitExpiry = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(600))
+            guard !Task.isCancelled else { return }
+            self?.pendingFit = nil
+        }
+
+        fit(routeRect)
+    }
+
+    /// Redoes the most recent fit against a newly measured covered area.
+    func refitForObscuredArea() {
+        guard let pendingFit else { return }
+        fit(pendingFit)
+    }
+
+    private func fit(_ routeRect: MKMapRect) {
         let horizontalPadding = max(routeRect.size.width * 0.24, 1_200)
         let verticalPadding = max(routeRect.size.height * 0.30, 1_200)
-        move(to: .rect(
-            routeRect.insetBy(dx: -horizontalPadding, dy: -verticalPadding)
-        ))
+        let padded = routeRect.insetBy(dx: -horizontalPadding, dy: -verticalPadding)
+
+        guard viewSize.width > 0, viewSize.height > 0 else {
+            move(to: .rect(padded))
+            return
+        }
+
+        let top = min(0.4, obscuredInsets.top / viewSize.height)
+        let bottom = min(0.5, obscuredInsets.bottom / viewSize.height)
+        let visible = max(0.25, 1 - top - bottom)
+
+        // A rect is fitted by whichever of its dimensions binds first, and a
+        // walking route is usually wide, so growing the height alone does
+        // nothing. Give the rect the view's own aspect ratio and it is fitted
+        // exactly, leaving the route the share of the height it was given.
+        var height = padded.size.height / visible
+        var width = padded.size.width
+        let aspect = viewSize.width / viewSize.height
+        if width / height < aspect {
+            width = height * aspect
+        } else {
+            height = width / aspect
+        }
+
+        // Put the route's centre where the middle of the uncovered band falls.
+        let centre = 0.5 + (top - bottom) / 2
+        move(to: .rect(MKMapRect(
+            origin: MKMapPoint(x: padded.midX - width / 2, y: padded.midY - height * centre),
+            size: MKMapSize(width: width, height: height)
+        )))
     }
 
     func prepareCurrentLocation(recenter: Bool = false) {

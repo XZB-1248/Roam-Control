@@ -14,6 +14,9 @@ struct HomeView: View {
     @State private var shouldRefreshRealLocationWhenActive = false
     @State private var shouldClearLocationAfterRestoration = false
     @State private var visibleMapCamera: MapCamera?
+    @State private var mapFrame: CGRect = .zero
+    @State private var topOverlayBottom: CGFloat = 0
+    @State private var cardTop: CGFloat = 0
     @State private var isPreparingRecoveredWalk = false
     @State private var recoveredWalkError: String?
     @FocusState private var isSearchFocused: Bool
@@ -74,6 +77,10 @@ struct HomeView: View {
                 }
             }
             .ignoresSafeArea()
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
+                mapFrame = frame
+                updateObscuredMapArea()
+            }
 
             VStack(spacing: 12) {
                 MapSearchBar(
@@ -175,6 +182,10 @@ struct HomeView: View {
                     }
 
                     Spacer()
+                    .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: { y in
+                        topOverlayBottom = y
+                        updateObscuredMapArea()
+                    }
 
                     HStack {
                     Spacer()
@@ -290,6 +301,10 @@ struct HomeView: View {
                     }
                     .id(selectionCardState)
                     .transition(.blurReplace)
+                    .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: { y in
+                        cardTop = y
+                        updateObscuredMapArea()
+                    }
                 } else {
                     Spacer()
                 }
@@ -567,6 +582,25 @@ struct HomeView: View {
         )
 
         mapModel.move(to: .camera(northUpCamera))
+    }
+
+    /// The cards float over the map rather than inset it, so the map is told how
+    /// much of itself is covered.
+    /// The overlays are measured in global coordinates, so the map has to be
+    /// too — it ignores the safe area, and its own size is reported without it.
+    private func updateObscuredMapArea() {
+        guard mapFrame.height > 0 else { return }
+
+        let margin: CGFloat = 12
+        let insets = MapViewModel.ObscuredInsets(
+            top: max(0, topOverlayBottom - mapFrame.minY + margin),
+            bottom: max(0, mapFrame.maxY - cardTop + margin)
+        )
+        guard insets != mapModel.obscuredInsets || mapFrame.size != mapModel.viewSize else { return }
+
+        mapModel.viewSize = mapFrame.size
+        mapModel.obscuredInsets = insets
+        mapModel.refitForObscuredArea()
     }
 
     private func showCurrentLocationNorthUp() {
