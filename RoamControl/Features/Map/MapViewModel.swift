@@ -170,13 +170,16 @@ final class MapViewModel: NSObject, MKLocalSearchCompleterDelegate {
 
     func showCurrentLocation() {
         if let cachedLocation = cachedRealLocation() {
+            // The cache answers instantly but can hold a simulated position: a
+            // session's location lingers for a few seconds after it ends, long
+            // enough to be captured as the real one. Correct the map once a
+            // genuinely current fix arrives.
             center(on: cachedLocation)
             errorMessage = nil
-            isFindingRealLocation = false
             requestCurrentLocation(
-                recenter: false,
+                recenter: true,
                 reportErrors: false,
-                requireFreshLocation: false
+                requireFreshLocation: true
             )
             return
         }
