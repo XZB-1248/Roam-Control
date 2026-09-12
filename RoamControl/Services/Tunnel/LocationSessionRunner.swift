@@ -10,7 +10,16 @@ import RoamPairingFFI
 final class LocationSessionRunner {
     enum Outcome: Sendable, Equatable {
         case success
+        /// The worker acknowledged a stop request and wound down cleanly.
+        case cancelled
         case failure(String)
+
+        var isSuccessful: Bool {
+            switch self {
+            case .success, .cancelled: true
+            case .failure: false
+            }
+        }
     }
 
     enum Event {
@@ -233,15 +242,16 @@ final class LocationSessionRunner {
         pending = nil
 
         onEvent?(.finished(outcome))
-        finishBackgroundTask(success: outcome == .success)
+        finishBackgroundTask(success: outcome.isSuccessful)
     }
 
     private func handleExpiration() {
         onEvent?(.expired)
 
+        // An expiry is never a completed session, so neither branch reports one.
         guard cancel() else {
             // Nothing was running, so no `.finished` is coming.
-            finishBackgroundTask(success: true)
+            finishBackgroundTask(success: false)
             return
         }
 
@@ -251,7 +261,7 @@ final class LocationSessionRunner {
         teardownWatchdog = Task { @MainActor [weak self] in
             try? await Task.sleep(for: Self.teardownGracePeriod)
             guard !Task.isCancelled, let self else { return }
-            self.finishBackgroundTask(success: true)
+            self.finishBackgroundTask(success: false)
         }
     }
 
@@ -293,6 +303,9 @@ final class LocationSessionRunner {
 }
 
 private extension LocationSessionRunner.Outcome {
+    /// The engine reports a stop it was asked to make as this exact error.
+    static let nativeCancellationMessage = "The location session was stopped."
+
     init(result: RCLocationResult, returnCode: Int32) {
         guard returnCode != 0 else {
             self = .success
@@ -300,9 +313,14 @@ private extension LocationSessionRunner.Outcome {
         }
 
         let message = result.error_message.map { String(cString: $0) } ?? ""
-        self = .failure(
-            message.isEmpty ? "The iPhone could not start the location session." : message
-        )
+        switch message {
+        case Self.nativeCancellationMessage:
+            self = .cancelled
+        case "":
+            self = .failure("The iPhone could not start the location session.")
+        default:
+            self = .failure(message)
+        }
     }
 }
 

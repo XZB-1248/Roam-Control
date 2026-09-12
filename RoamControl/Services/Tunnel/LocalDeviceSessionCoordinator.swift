@@ -41,7 +41,10 @@ final class LocalDeviceSessionCoordinator {
     private static let maximumProbeAttempts = 3
 
     private(set) var phase: DeviceSessionPhase = .idle {
-        didSet { onPhaseChange?(phase) }
+        didSet {
+            guard phase != oldValue else { return }
+            onPhaseChange?(phase)
+        }
     }
     private(set) var mobileDataGuidance: MobileDataGuidance?
 
@@ -81,6 +84,10 @@ final class LocalDeviceSessionCoordinator {
         case .idle, .active, .failed: false
         }
     }
+
+    /// `true` once a stop the iPhone never confirmed has left the simulated
+    /// location possibly still in place. The recovery record has to survive it.
+    private(set) var hasUnconfirmedSimulation = false
 
     /// Used to keep a preference change from cutting a live session off.
     var needsTunnel: Bool {
@@ -325,6 +332,10 @@ final class LocalDeviceSessionCoordinator {
     }
 
     private func handleSessionFinished(_ outcome: LocationSessionRunner.Outcome) {
+        if outcome.isSuccessful {
+            hasUnconfirmedSimulation = false
+        }
+
         if let pendingFailureMessage {
             self.pendingFailureMessage = nil
             finishSession(with: .failed(pendingFailureMessage))
@@ -335,12 +346,21 @@ final class LocalDeviceSessionCoordinator {
             cancellationRequested = false
             clearPendingSession()
             tunnel.stopUnlessKeptRunning()
-            completeRestoration()
+
+            // The engine confirms clearing the simulated location before it
+            // returns, so a failure here means the iPhone is still simulating.
+            guard case .failure(let message) = outcome else {
+                completeRestoration()
+                return
+            }
+            restorationDisplayStart = nil
+            hasUnconfirmedSimulation = true
+            phase = .failed(Self.presentable(message))
             return
         }
 
         switch outcome {
-        case .success:
+        case .success, .cancelled:
             finishSession(with: .idle)
 
         case .failure(let message):

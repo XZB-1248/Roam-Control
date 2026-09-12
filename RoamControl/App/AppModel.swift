@@ -469,7 +469,7 @@ final class AppModel {
                     dismissInterruptedSessionRecovery()
                 }
             }
-            clearActiveSessionRecovery()
+            clearUnneededSessionRecovery()
             if case .paired = pairingStatus {
                 connectionState = .ready
             } else {
@@ -520,9 +520,16 @@ final class AppModel {
                     analyticsEvent(forLocationStartFailure: message),
                     enabled: sharesAnonymousUsageStatistics
                 )
-                clearActiveSessionRecovery()
+                clearUnneededSessionRecovery()
             }
         }
+    }
+
+    /// A stop the iPhone never confirmed leaves it possibly still simulating, so
+    /// the next launch has to keep offering to restore its real location.
+    private func clearUnneededSessionRecovery() {
+        guard !deviceSession.hasUnconfirmedSimulation else { return }
+        clearActiveSessionRecovery()
     }
 
     private func analyticsEvent(forLocationStartFailure message: String) -> UsageAnalyticsEvent {
