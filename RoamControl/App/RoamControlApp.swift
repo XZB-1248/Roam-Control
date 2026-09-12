@@ -6,6 +6,10 @@ struct RoamControlApp: App {
     @Environment(\.scenePhase) private var scenePhase
     @State private var appModel = AppModel()
 
+    init() {
+        RCInstallStandardMapGlobeSupport()
+    }
+
     var body: some Scene {
         WindowGroup {
             Group {

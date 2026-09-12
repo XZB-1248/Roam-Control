@@ -88,6 +88,9 @@ For UK regional settings, short distances are shown in yards and longer distance
 
 ## Map controls
 
+In Standard style on compatible system builds, zoom out to see the globe while
+keeping the standard map colours. Zoom back in to select a location as usual.
+
 - **Current location** flies to the iPhone's real position and turns the map north-up. It is unavailable while a simulated location is active.
 - **Compass** appears after the map is rotated. It shows N, E, S and W; tap it to face north again.
 - **Connection status** opens pairing and connection setup.

@@ -24,6 +24,10 @@ Use this checklist before packaging an IPA or declaring a development build stab
 
 ## Map and search
 
+- [ ] Standard zooms out to a globe with standard map colours, and zooms back to street level.
+- [ ] Switch Standard → Satellite → Hybrid → Standard at globe scale; each style renders correctly and Standard remains a globe after relaunch.
+- [ ] Rotate the Standard globe and use the compass to return north; nearby coordinate searches and dropped pins remain accurate.
+- [ ] Preview a walking route, zoom between street and globe scale, then clear the route; markers and the route render without a crash.
 - [ ] Live suggestions appear after two or more characters.
 - [ ] Choosing a result dismisses the keyboard and clears the search text.
 - [ ] Search accepts valid latitude/longitude coordinates.

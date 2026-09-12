@@ -5,7 +5,7 @@ This guide covers Roam Control's development builds and the planned IPA workflow
 ## Current release identity
 
 - Marketing version: `0.9.1`
-- Current build: `47`
+- Current build: `49`
 - Bundle identifier: `com.sean.roamcontrol`
 - Minimum deployment target: iOS 27
 - Supported device family: iPhone
@@ -37,6 +37,22 @@ Keep the Debug and Release configurations identical.
 5. Press **Run**.
 
 The simulator can validate most interface states, but it cannot perform the real RPPairing handshake or start a location session.
+
+### Standard map globe support
+
+`StandardMapGlobeSupport.m` adjusts MapKit's private cartographic
+configuration factory so Standard maps use globe projection. The adjustment is
+installed before the first map view, applies again when configurations are
+rebuilt, and preserves the other configuration fields and non-Standard styles.
+It changes only this app's process; no system preferences are written.
+
+The installer checks for the private method and a compatible Objective-C method
+signature, without restricting the OS version. If either check fails, the app
+retains MapKit's default projection. The configuration layout and projection
+value were verified on iOS 27; a matching signature does not guarantee identical
+field semantics on future versions. Recheck the map regression rows on OS
+updates. Simulator checks do not replace testing the device build of these
+private interfaces.
 
 ## Native pairing engine
 
