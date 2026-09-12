@@ -10,6 +10,14 @@ All notable public changes to Roam Control are recorded here.
 - Renamed the bundle identifier to `com.clover.RoamControl`. The tunnel extension is `com.clover.RoamControl.tunnel`.
 - Building now requires a paid Apple Developer Program membership: Network Extension entitlements cannot be signed by a free account, so SideStore and AltStore installs are no longer possible.
 
+### Fixed
+
+- Stopping a location session now waits for the iPhone to confirm that the simulated location was cleared, and reports it when the confirmation never arrives. Previously the clear was fire-and-forget, so a failed or hung stop still looked successful. Adopted from upstream 0.9.2 Beta 3, including the rebuilt native slices.
+- A stop the iPhone never confirmed keeps the session recovery record, so the next launch still offers to restore the real location.
+- Pairing: destroy the native session on the main actor, where cancellation also runs; keep the coordinator busy during the keychain write; ignore background-task launches and submission failures belonging to a superseded attempt; settle the phase when a cancel arrives before the worker starts.
+- Background-task refusals now report what iOS actually withheld, and a refusal the tunnel cannot fix no longer sends the user into tunnel troubleshooting.
+- Connection Health connects to the pairing port it discovered instead of passing on the announcement alone, so a stale announcement no longer reports a healthy connection.
+
 ### Added
 
 - Settings → Local Tunnel shows the tunnel's live state and can keep it running between sessions for troubleshooting.
