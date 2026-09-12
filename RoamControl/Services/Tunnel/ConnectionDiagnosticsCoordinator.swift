@@ -21,8 +21,10 @@ final class ConnectionDiagnosticsCoordinator {
 
     private let tunnel: LocalTunnelController
     private let browser = RemotePairingBrowser()
+    private let probe = LocalTunnelReachabilityProbe()
     private var checkTask: Task<Void, Never>?
     private var timeoutTask: Task<Void, Never>?
+    private var isVerifyingReachability = false
 
     init(tunnel: LocalTunnelController) {
         self.tunnel = tunnel
@@ -76,8 +78,11 @@ final class ConnectionDiagnosticsCoordinator {
             guard let self, self.state == .running else { return }
 
             switch event {
-            case .matched:
-                self.finish(.passed("The pairing record is valid and this iPhone is reachable through the local tunnel."))
+            case .matched(let service):
+                // A refreshed TXT record re-announces a service already being
+                // checked; restarting the probe would read it as unreachable.
+                guard !self.isVerifyingReachability else { return }
+                self.verifyReachability(of: service)
             case .unmatched:
                 break
             case .unavailable:
@@ -96,11 +101,31 @@ final class ConnectionDiagnosticsCoordinator {
         }
     }
 
+    /// An announcement only proves the iPhone is talking. Connecting to the port
+    /// it named is what proves the tunnel carries traffic to it.
+    private func verifyReachability(of service: RemotePairingService) {
+        isVerifyingReachability = true
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let isReachable = await self.probe.canReach(port: service.port)
+            self.isVerifyingReachability = false
+            guard self.state == .running else { return }
+
+            self.finish(isReachable
+                ? .passed("This iPhone's pairing service answered through the local tunnel. The secure session itself is verified when you start a location session.")
+                : .failed("The announcement matches, but this iPhone's pairing service did not answer through the local tunnel. Turn the tunnel off and on in Settings, then try again.")
+            )
+        }
+    }
+
     private func cancel(resetState: Bool) {
         checkTask?.cancel()
         checkTask = nil
         timeoutTask?.cancel()
         timeoutTask = nil
+        probe.cancel()
+        isVerifyingReachability = false
         browser.stop()
 
         if resetState, state == .running {
