@@ -65,6 +65,13 @@ struct HomeView: View {
                 .onMapCameraChange(frequency: .continuous) { context in
                     visibleMapCamera = context.camera
                 }
+                .background {
+                    RouteLineWidthUpdater(
+                        polyline: walkingRoutePlanner.route?.polyline,
+                        camera: visibleMapCamera
+                    )
+                    .allowsHitTesting(false)
+                }
                 .onTapGesture { point in
                     if isSearchFocused {
                         isSearchFocused = false
