@@ -243,7 +243,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Configuration/RoamControl.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 51;
+				CURRENT_PROJECT_VERSION = 52;
 				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "Configuration/RoamControl-Info.plist";
@@ -251,7 +251,7 @@
 				MARKETING_VERSION = 0.9.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.clover.RoamControl;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				ROAMCONTROL_BUILD_TIMESTAMP = "2026-09-13T02:07:06Z";
+				ROAMCONTROL_BUILD_TIMESTAMP = "2026-09-13T02:52:04Z";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_OBJC_BRIDGING_HEADER = "RoamControl/Support/RoamControl-Bridging-Header.h";
@@ -270,7 +270,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Configuration/RoamControl.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 51;
+				CURRENT_PROJECT_VERSION = 52;
 				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "Configuration/RoamControl-Info.plist";
@@ -278,7 +278,7 @@
 				MARKETING_VERSION = 0.9.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.clover.RoamControl;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				ROAMCONTROL_BUILD_TIMESTAMP = "2026-09-13T02:07:06Z";
+				ROAMCONTROL_BUILD_TIMESTAMP = "2026-09-13T02:52:04Z";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_OBJC_BRIDGING_HEADER = "RoamControl/Support/RoamControl-Bridging-Header.h";
@@ -295,7 +295,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = Configuration/RoamControlTunnel.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 51;
+				CURRENT_PROJECT_VERSION = 52;
 				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "Configuration/RoamControlTunnel-Info.plist";
@@ -318,7 +318,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = Configuration/RoamControlTunnel.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 51;
+				CURRENT_PROJECT_VERSION = 52;
 				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "Configuration/RoamControlTunnel-Info.plist";

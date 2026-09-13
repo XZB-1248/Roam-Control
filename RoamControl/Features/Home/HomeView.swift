@@ -14,6 +14,7 @@ struct HomeView: View {
     @State private var shouldRefreshRealLocationWhenActive = false
     @State private var shouldClearLocationAfterRestoration = false
     @State private var visibleMapCamera: MapCamera?
+    @State private var nativeRenderedRoute: MKRoute?
     @State private var mapFrame: CGRect = .zero
     @State private var topOverlayBottom: CGFloat = 0
     @State private var cardTop: CGFloat = 0
@@ -33,7 +34,7 @@ struct HomeView: View {
         ZStack {
             MapReader { proxy in
                 Map(position: $mapModel.cameraPosition) {
-                    if let route = walkingRoutePlanner.route {
+                    if let route = walkingRoutePlanner.route, nativeRenderedRoute !== route {
                         MapPolyline(route)
                             .stroke(.blue, lineWidth: 4)
                     }
@@ -66,9 +67,9 @@ struct HomeView: View {
                     visibleMapCamera = context.camera
                 }
                 .background {
-                    RouteLineWidthUpdater(
-                        polyline: walkingRoutePlanner.route?.polyline,
-                        camera: visibleMapCamera
+                    NativeRouteOverlay(
+                        route: walkingRoutePlanner.route,
+                        renderedRoute: $nativeRenderedRoute
                     )
                     .allowsHitTesting(false)
                 }

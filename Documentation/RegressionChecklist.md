@@ -29,8 +29,9 @@ Use this checklist before packaging an IPA or declaring a development build stab
 - [ ] Rotate the Standard globe and use the compass to return north; nearby coordinate searches and dropped pins remain accurate.
 - [ ] Preview a walking route, zoom between street and globe scale, then clear the route; markers and the route render without a crash.
 - [ ] At globe scale with a walking route, the base map remains a continuous sphere without flat tile fragments; zoom back in and check that POI and traffic labels stay aligned with roads.
-- [ ] With a walking route, pinch in and out continuously: the approximately 4-point stroke updates before fingers lift, without a width jump at gesture end. Repeat with Standard, Satellite and Hybrid, including rotation and pitch.
-- [ ] Stop zooming, replace the route, then clear it: route redraws stop while idle, replacement routes update during zoom, and no stale route remains.
+- [ ] With a walking route, pinch in and out continuously: the system navigation stroke stays sharp during the gesture and at maximum zoom, without stretched raster tiles or a width jump at gesture end. Repeat with Standard, Satellite and Hybrid, including rotation and pitch.
+- [ ] Stop zooming, replace the route, then clear it: replacement routes render correctly, clearing removes the native route, and no stale or duplicate route remains.
+- [ ] Remove and recreate the map with a route selected: the old native overlay is released and the new map shows exactly one route. An unavailable/incompatible native API must leave the public polyline visible.
 - [ ] Live suggestions appear after two or more characters.
 - [ ] Choosing a result dismisses the keyboard and clears the search text.
 - [ ] Search accepts valid latitude/longitude coordinates.

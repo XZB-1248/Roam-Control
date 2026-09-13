@@ -5,7 +5,7 @@ This guide covers Roam Control's development builds and the planned IPA workflow
 ## Current release identity
 
 - Marketing version: `0.9.1`
-- Current build: `51`
+- Current build: `52`
 - Bundle identifier: `com.sean.roamcontrol`
 - Minimum deployment target: iOS 27
 - Supported device family: iPhone
@@ -57,25 +57,37 @@ field semantics on future versions. Recheck the map regression rows on OS
 updates. Simulator checks do not replace testing the device build of these
 private interfaces.
 
-### Walking route width during zoom
+### Native walking route rendering
 
-`RouteLineWidthUpdater` uses continuous camera notifications to wake a display
-link (at most 30 updates per second, also in touch-tracking run-loop mode). It
-redraws the walking route only when the live zoom scale changes, and pauses after
-the camera settles. Clearing the route or removing the map stops the link.
+`NativeRouteOverlay` attaches a `VKPolylineOverlay` and matching `VKRouteContext`
+to SwiftUI's existing map through `NativeRouteSupport.m`. This uses the native
+navigation vector pipeline, avoiding the raster tiles used by ordinary globe
+polylines. Zooming no longer requires a display link or repeated stroke redraws.
+The route uses the system's blue navigation style and zoom-dependent width;
+it does not promise a fixed 4-point stroke.
 
-Globe overlays require rasterization. `RouteLineWidthSupport.m` keeps this
-rendering path and adjusts the route's stroke using MapKit's private `_zoomScale`
-getter instead of the cached tile's discrete scale. A narrowly scoped hook on
-`_setMapView:` attaches that scale to replacement route renderers before they
-draw their first tile. The shared scale is atomic because MapKit draws tiles on
-background threads. Other overlays retain their original stroke behavior; route
-matching checks the complete polyline geometry.
+Private classes and method signatures are checked at runtime, without an OS
+version gate. If unavailable, the ordinary SwiftUI `MapPolyline` remains visible.
+Route replacement, clearing and view teardown remove the owned vector overlay
+and restore the previous context only if the map still uses our context. No
+navigation session is started and no global rendering settings are changed.
 
-Both private methods and the public stroke method are checked for compatible
-signatures, with no OS-version gate. If unavailable, normal MapKit rendering is
-retained. Raster tile delivery is asynchronous, so device gesture smoothness
-still needs checking; this does not replace the globe/label regression checks.
+The native path was checked in an isolated simulator fixture at maximum zoom,
+during a fast camera animation, at globe scale, across map styles, and while
+clearing/restoring a route. Release build 52 was visually checked on an iPhone 17.
+A follow-up simulator review verified map teardown/recreation, route replacement,
+repeated cleanup, preservation of another client's context and ABI-mismatch
+fallback. Matching private signatures alone does not guarantee future OS
+compatibility.
+
+Keep the two compatibility boundaries separate: `StandardMapGlobeSupport.m`
+owns the sole method replacement (cartographic projection/terrain), while
+`NativeRouteSupport.m` owns route APIs and checks their calling conventions.
+`NativeRouteOverlay` only manages SwiftUI attachment and public fallback state.
+Do not restore the superseded raster stroke hooks or camera-driven display link.
+The session is main-actor isolated, cannot be created without a map/route, and
+has idempotent cleanup. The continuous camera state in `HomeView` still serves
+the compass; it does not drive route rendering.
 
 ## Native pairing engine
 
